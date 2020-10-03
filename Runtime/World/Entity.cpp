@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,23 +19,25 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-//= INCLUDES =================================
+//= INCLUDES ========================
+#include "Spartan.h"
 #include "Entity.h"
 #include "World.h"
+#include "Components/Camera.h"
+#include "Components/Collider.h"
+#include "Components/Transform.h"
+#include "Components/Constraint.h"
+#include "Components/Light.h"
+#include "Components/Renderable.h"
+#include "Components/RigidBody.h"
+#include "Components/SoftBody.h"
+#include "Components/Environment.h"
+#include "Components/Script.h"
+#include "Components/AudioSource.h"
+#include "Components/AudioListener.h"
+#include "Components/Terrain.h"
 #include "../IO/FileStream.h"
-#include "../Core/Context.h"
-#include "../World/Components/Camera.h"
-#include "../World/Components/Collider.h"
-#include "../World/Components/Transform.h"
-#include "../World/Components/Constraint.h"
-#include "../World/Components/Light.h"
-#include "../World/Components/Renderable.h"
-#include "../World/Components/RigidBody.h"
-#include "../World/Components/Environment.h"
-#include "../World/Components/Script.h"
-#include "../World/Components/AudioSource.h"
-#include "../World/Components/AudioListener.h"
-//============================================
+//===================================
 
 //= NAMESPACES =====
 using namespace std;
@@ -53,102 +55,104 @@ namespace Spartan
     }
 
     Entity::~Entity()
-	{
-		// delete components
-		for (auto it = m_components.begin(); it != m_components.end();)
-		{
-			(*it)->OnRemove();
-			(*it).reset();
-			it = m_components.erase(it);
-		}
-		m_components.clear();
+    {
+        m_is_active             = false;
+        m_hierarchy_visibility  = false;
+        m_transform             = nullptr;
+        m_renderable            = nullptr;
+        m_context               = nullptr;
+        m_name.clear();
+        m_component_mask = 0;
+        for (auto it = m_components.begin(); it != m_components.end();)
+        {
+            (*it)->OnRemove();
+            (*it).reset();
+            it = m_components.erase(it);
+        }
+        m_components.clear();
+    }
 
-		m_name.clear();
-		m_is_active				= true;
-		m_hierarchy_visibility	= true;
-	}
+    void Entity::Clone()
+    {
+        auto scene = m_context->GetSubsystem<World>();
+        vector<Entity*> clones;
 
-	void Entity::Clone()
-	{
-		auto scene = m_context->GetSubsystem<World>();
-		vector<Entity*> clones;
+        // Creation of new entity and copying of a few properties
+        auto clone_entity = [&scene, &clones](Entity* entity)
+        {
+            // Clone the name and the ID
+            auto clone = scene->EntityCreate().get();
+            clone->SetId(GenerateId());
+            clone->SetName(entity->GetName());
+            clone->SetActive(entity->IsActive());
+            clone->SetHierarchyVisibility(entity->IsVisibleInHierarchy());
 
-		// Creation of new entity and copying of a few properties
-		auto clone_entity = [&scene, &clones](Entity* entity)
-		{
-			// Clone the name and the ID
-			auto clone = scene->EntityCreate().get();
-			clone->SetId(GenerateId());
-			clone->SetName(entity->GetName());
-			clone->SetActive(entity->IsActive());
-			clone->SetHierarchyVisibility(entity->IsVisibleInHierarchy());
+            // Clone all the components
+            for (const auto& component : entity->GetAllComponents())
+            {
+                const auto& original_comp    = component;
+                auto clone_comp                = clone->AddComponent(component->GetType());
+                clone_comp->SetAttributes(original_comp->GetAttributes());
+            }
 
-			// Clone all the components
-			for (const auto& component : entity->GetAllComponents())
-			{
-				const auto& original_comp	= component;
-				auto clone_comp				= clone->AddComponent(component->GetType());
-				clone_comp->SetAttributes(original_comp->GetAttributes());
-			}
+            clones.emplace_back(clone);
 
-			clones.emplace_back(clone);
+            return clone;
+        };
 
-			return clone;
-		};
+        // Cloning of an entity and it's descendants (this is a recursive lambda)
+        function<Entity*(Entity*)> clone_entity_and_descendants = [&clone_entity_and_descendants, &clone_entity](Entity* original)
+        {
+            // clone self
+            const auto clone_self = clone_entity(original);
 
-		// Cloning of an entity and it's descendants (this is a recursive lambda)
-		function<Entity*(Entity*)> clone_entity_and_descendants = [&clone_entity_and_descendants, &clone_entity](Entity* original)
-		{
-			// clone self
-			const auto clone_self = clone_entity(original);
+            // clone children make them call this lambda
+            for (const auto& child_transform : original->GetTransform()->GetChildren())
+            {
+                const auto clone_child = clone_entity_and_descendants(child_transform->GetEntity());
+                clone_child->GetTransform()->SetParent(clone_self->GetTransform());
+            }
 
-			// clone children make them call this lambda
-			for (const auto& child_transform : original->GetTransform_PtrRaw()->GetChildren())
-			{
-				const auto clone_child = clone_entity_and_descendants(child_transform->GetEntity_PtrRaw());
-				clone_child->GetTransform_PtrRaw()->SetParent(clone_self->GetTransform_PtrRaw());
-			}
+            // return self
+            return clone_self;
+        };
 
-			// return self
-			return clone_self;
-		};
+        // Clone the entire hierarchy
+        clone_entity_and_descendants(this);
+    }
 
-		// Clone the entire hierarchy
-		clone_entity_and_descendants(this);
-	}
+    void Entity::Start()
+    {
+        // call component Start()
+        for (auto const& component : m_components)
+        {
+            component->OnStart();
+        }
+    }
 
-	void Entity::Start()
-	{
-		// call component Start()
-		for (auto const& component : m_components)
-		{
-			component->OnStart();
-		}
-	}
+    void Entity::Stop()
+    {
+        // call component Stop()
+        for (auto const& component : m_components)
+        {
+            component->OnStop();
+        }
+    }
 
-	void Entity::Stop()
-	{
-		// call component Stop()
-		for (auto const& component : m_components)
-		{
-			component->OnStop();
-		}
-	}
+    void Entity::Tick(float delta_time)
+    {
+        if (!m_is_active)
+            return;
 
-	void Entity::Tick(float delta_time)
-	{
-		if (!m_is_active)
-			return;
+        // call component Update()
+        for (const auto& component : m_components)
+        {
+            component->OnTick(delta_time);
+        }
+    }
 
-		// call component Update()
-		for (const auto& component : m_components)
-		{
-			component->OnTick(delta_time);
-		}
-	}
-
-	void Entity::Serialize(FileStream* stream)
-	{
+    void Entity::Serialize(FileStream* stream)
+    {
         // BASIC DATA
         {
             stream->Write(m_is_active);
@@ -157,7 +161,7 @@ namespace Spartan
             stream->Write(m_name);
         }
 
-		// COMPONENTS
+        // COMPONENTS
         {
             stream->Write(static_cast<uint32_t>(m_components.size()));
             for (const auto& component : m_components)
@@ -174,7 +178,7 @@ namespace Spartan
 
         // CHILDREN
         {
-            auto children = GetTransform_PtrRaw()->GetChildren();
+            auto children = GetTransform()->GetChildren();
 
             // Children count
             stream->Write(static_cast<uint32_t>(children.size()));
@@ -188,9 +192,9 @@ namespace Spartan
             // Children
             for (const auto& child : children)
             {
-                if (child->GetEntity_PtrRaw())
+                if (child->GetEntity())
                 {
-                    child->GetEntity_PtrRaw()->Serialize(stream);
+                    child->GetEntity()->Serialize(stream);
                 }
                 else
                 {
@@ -199,10 +203,10 @@ namespace Spartan
                 }
             }
         }
-	}
+    }
 
-	void Entity::Deserialize(FileStream* stream, Transform* parent)
-	{
+    void Entity::Deserialize(FileStream* stream, Transform* parent)
+    {
         // BASIC DATA
         {
             stream->Read(&m_is_active);
@@ -216,11 +220,11 @@ namespace Spartan
             const auto component_count = stream->ReadAs<uint32_t>();
             for (uint32_t i = 0; i < component_count; i++)
             {
-                uint32_t type   = ComponentType_Unknown;
+                uint32_t type   = static_cast<uint32_t>(ComponentType::Unknown);
                 uint32_t id     = 0;
 
-                stream->Read(&type);	// load component's type
-                stream->Read(&id);		// load component's id
+                stream->Read(&type);    // load component's type
+                stream->Read(&id);        // load component's id
 
                 auto component = AddComponent(static_cast<ComponentType>(type), id);
             }
@@ -258,7 +262,7 @@ namespace Spartan
             // Children
             for (const auto& child : children)
             {
-                child.lock()->Deserialize(stream, GetTransform_PtrRaw());
+                child.lock()->Deserialize(stream, GetTransform());
             }
 
             if (m_transform)
@@ -267,53 +271,71 @@ namespace Spartan
             }
         }
 
-		// Make the scene resolve
-		FIRE_EVENT(Event_World_Resolve_Pending);
-	}
+        // Make the scene resolve
+        FIRE_EVENT(EventType::WorldResolve);
+    }
 
-    shared_ptr<IComponent> Entity::AddComponent(const ComponentType type, uint32_t id /*= 0*/)
+    IComponent* Entity::AddComponent(const ComponentType type, uint32_t id /*= 0*/)
     {
         // This is the only hardcoded part regarding components. It's 
         // one function but it would be nice if that gets automated too, somehow...
-        shared_ptr<IComponent> component;
+
         switch (type)
         {
-            case ComponentType_AudioListener:	component = AddComponent<AudioListener>(id);    break;
-            case ComponentType_AudioSource:		component = AddComponent<AudioSource>(id);	    break;
-            case ComponentType_Camera:			component = AddComponent<Camera>(id);		    break;
-            case ComponentType_Collider:		component = AddComponent<Collider>(id);		    break;
-            case ComponentType_Constraint:		component = AddComponent<Constraint>(id);	    break;
-            case ComponentType_Light:			component = AddComponent<Light>(id);		    break;
-            case ComponentType_Renderable:		component = AddComponent<Renderable>(id);	    break;
-            case ComponentType_RigidBody:		component = AddComponent<RigidBody>(id);	    break;
-            case ComponentType_Script:			component = AddComponent<Script>(id);		    break;
-            case ComponentType_Environment:			component = AddComponent<Environment>(id);		    break;
-            case ComponentType_Transform:		component = AddComponent<Transform>(id);	    break;
-            case ComponentType_Unknown:														    break;
-            default:																		    break;
+            case ComponentType::AudioListener:    return AddComponent<AudioListener>(id);
+            case ComponentType::AudioSource:    return AddComponent<AudioSource>(id);
+            case ComponentType::Camera:            return AddComponent<Camera>(id);
+            case ComponentType::Collider:        return AddComponent<Collider>(id);
+            case ComponentType::Constraint:        return AddComponent<Constraint>(id);
+            case ComponentType::Light:            return AddComponent<Light>(id);
+            case ComponentType::Renderable:        return AddComponent<Renderable>(id);
+            case ComponentType::RigidBody:        return AddComponent<RigidBody>(id);
+            case ComponentType::SoftBody:        return AddComponent<SoftBody>(id);
+            case ComponentType::Script:            return AddComponent<Script>(id);
+            case ComponentType::Environment:    return AddComponent<Environment>(id);
+            case ComponentType::Transform:        return AddComponent<Transform>(id);
+            case ComponentType::Terrain:           return AddComponent<Terrain>(id);
+            case ComponentType::Unknown:        return nullptr;
+            default:                            return nullptr;
         }
 
-        return component;
+        return nullptr;
     }
 
     void Entity::RemoveComponentById(const uint32_t id)
-	{
-		for (auto it = m_components.begin(); it != m_components.end(); ) 
-		{
-			auto component = *it;
-			if (id == component->GetId())
-			{
-				component->OnRemove();
-				component.reset();
-				it = m_components.erase(it);
-			}
-			else
-			{
-				++it;
-			}
-		}
+    {
+        ComponentType component_type = ComponentType::Unknown;
 
-		// Make the scene resolve
-		FIRE_EVENT(Event_World_Resolve_Pending);
-	}
+        for (auto it = m_components.begin(); it != m_components.end(); ) 
+        {
+            auto component = *it;
+            if (id == component->GetId())
+            {
+                component_type = component->GetType();
+                component->OnRemove();
+                it = m_components.erase(it);    
+                break;
+            }
+            else
+            {
+                ++it;
+            }
+        }
+
+        // The script component can have multiple instance, so only remove
+        // it's flag if there are no more components of that type left
+        bool others_of_same_type_exist = false;
+        for (auto it = m_components.begin(); it != m_components.end(); ++it)
+        {
+            others_of_same_type_exist = ((*it)->GetType() == component_type) ? true : others_of_same_type_exist;
+        }
+
+        if (!others_of_same_type_exist)
+        {
+            m_component_mask &= ~GetComponentMask(component_type);
+        }
+
+        // Make the scene resolve
+        FIRE_EVENT(EventType::WorldResolve);
+    }
 }

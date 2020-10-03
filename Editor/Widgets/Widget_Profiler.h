@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -31,48 +31,50 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 struct Metric
 {
-	Metric() { Clear(); }
+    Metric() { Clear(); }
 
-	void AddSample(const float sample)
-	{
-		m_min = Spartan::Math::Min(m_min, sample);
-		m_max = Spartan::Math::Max(m_max, sample);
-		m_sum += sample;
-		m_sample_count++;
-		m_avg = float(m_sum / static_cast<float>(m_sample_count));
-	}
+    void AddSample(const float sample)
+    {
+        m_min = Spartan::Math::Helper::Min(m_min, sample);
+        m_max = Spartan::Math::Helper::Max(m_max, sample);
+        m_sum += sample;
+        m_sample_count++;
+        m_avg = float(m_sum / static_cast<float>(m_sample_count));
+    }
 
-	void Clear()
-	{
-		m_min			= FLT_MAX;
-		m_max			= FLT_MIN;
-		m_avg			= 0.0f;
-		m_sum			= 0.0f;
-		m_sample_count	= 0;
-	}
+    void Clear()
+    {
+        m_min            = FLT_MAX;
+        m_max            = FLT_MIN;
+        m_avg            = 0.0f;
+        m_sum            = 0.0f;
+        m_sample_count    = 0;
+    }
 
-	float m_min;
-	float m_max;
-	float m_avg;
-	double m_sum;
-	uint64_t m_sample_count;
+    float m_min;
+    float m_max;
+    float m_avg;
+    double m_sum;
+    uint64_t m_sample_count;
 };
 
 class Widget_Profiler : public Widget
 {
 public:
-	Widget_Profiler(Spartan::Context* context);
-	void Tick() override;
+    Widget_Profiler(Editor* editor);
+    void Tick() override;
 
 private:
-	void ShowCPU();
-	void ShowGPU();
-	void ShowPlot(std::vector<float>& data, Metric& metric, float time_value, bool is_stuttering);
+    void ShowCPU();
+    void ShowGPU();
+    void ShowTimeBlock(const Spartan::TimeBlock& time_block, float total_time) const;
+    void ShowPlot(std::vector<float>& data, Metric& metric, float time_value, bool is_stuttering) const;
 
-	std::vector<float> m_plot_times_cpu;
-	std::vector<float> m_plot_times_gpu;
-	unsigned int m_plot_size = 400;
-	Metric m_metric_cpu;
-	Metric m_metric_gpu;
-	Spartan::Profiler* m_profiler;
+    std::vector<float> m_plot_times_cpu;
+    std::vector<float> m_plot_times_gpu;
+    unsigned int m_plot_size = 400;
+    Metric m_metric_cpu;
+    Metric m_metric_gpu;
+    Spartan::Profiler* m_profiler;
+    float m_tree_depth_stride = 10;
 };

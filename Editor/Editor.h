@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -31,9 +31,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //= FORWARD DECLARATIONS =
 namespace Spartan 
 {
-	class Context; 
-	class Engine;
-	class Renderer;
+    class Context; 
+    class Engine;
+    class Renderer;
+    class Profiler;
     struct WindowData;
 }
 //========================
@@ -42,25 +43,38 @@ class Editor
 {
 public:
     Editor() = default;
-	~Editor();
+    ~Editor();
 
     void OnWindowMessage(Spartan::WindowData& window_data);
-	void Tick();
+    void OnTick();
+    Spartan::Context* GetContext() { return m_context; }
+
+    template<typename T>
+    T* GetWidget()
+    {
+        for (const auto& widget : m_widgets)
+        {
+            if (T* widget_t = dynamic_cast<T*>(widget.get()))
+            {
+                return widget_t;
+            }
+        }
+
+        return nullptr;
+    }
 
 private:
-	void Widgets_Create();
-	void Widgets_Tick();
-	void DockSpace_Begin();
-	void DockSpace_End();	
-	void ApplyStyle() const;
+    void ImGui_Initialise(const Spartan::WindowData& window_data);
+    void ImGui_ApplyStyle() const;
+    void ImGui_Begin();
+    void ImGui_End();
 
-	// Editor
-	std::vector<std::unique_ptr<Widget>> m_widgets;
-	bool m_initialized = false;
+    // Editor
+    std::vector<std::shared_ptr<Widget>> m_widgets;
+    bool m_initialised  = false;
+    bool m_editor_begun = false;
 
-	// Engine
-	std::unique_ptr<Spartan::Engine> m_engine;
-	std::shared_ptr<Spartan::RHI_Device> m_rhiDevice;
-	Spartan::Context* m_context	    = nullptr;
-	Spartan::Renderer* m_renderer	= nullptr;	
+    // Engine
+    std::unique_ptr<Spartan::Engine> m_engine;
+    Spartan::Context* m_context = nullptr;
 };

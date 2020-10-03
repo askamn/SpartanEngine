@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,28 +19,15 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-//= IMPLEMENTATION ===============
+//= INCLUDES ======================
+#include "Spartan.h"
 #include "../RHI_Implementation.h"
-#ifdef API_GRAPHICS_D3D11
-//================================
-
-//= INCLUDES ===========================
 #include "../RHI_Device.h"
 #include "../RHI_BlendState.h"
 #include "../RHI_RasterizerState.h"
-#include "../RHI_DepthStencilState.h"
 #include "../RHI_Shader.h"
 #include "../RHI_InputLayout.h"
-#include "../RHI_VertexBuffer.h"
-#include "../RHI_IndexBuffer.h"
-#include "../RHI_Viewport.h"
-#include "../../Logging/Log.h"
-#include "../../Profiling/Profiler.h"
-#include "../../Core/Settings.h"
-#include "../../Core/Context.h"
-#include "../../Math/Rectangle.h"
-#include "../../FileSystem/FileSystem.h"
-//======================================
+//=================================
 
 //= NAMESPACES ===============
 using namespace std;
@@ -49,22 +36,36 @@ using namespace Spartan::Math;
 
 namespace Spartan
 {
-	RHI_Device::RHI_Device(Context* context)
-	{
-        m_context       = context;
-		m_rhi_context   = make_shared<RHI_Context>();      
-		const static auto multithread_protection = false;
+    RHI_Device::RHI_Device(Context* context)
+    {
+        m_context                           = context;
+        m_rhi_context                       = make_shared<RHI_Context>();
+        d3d11_utility::globals::rhi_context = m_rhi_context.get();
+        d3d11_utility::globals::rhi_device  = this;
+        const bool multithread_protection   = true;
 
-		// Detect adapters
-		D3D11_Common::DetectAdapters(this);
+        // Detect adapters
+        d3d11_utility::DetectAdapters();
 
-		// Create device
-		{
+        // Resource limits
+        m_rhi_context->rhi_max_texture_dimension_2d = D3D11_REQ_TEXTURE2D_U_OR_V_DIMENSION;
+
+        const PhysicalDevice* physical_device = GetPrimaryPhysicalDevice();
+        if (!physical_device)
+        {
+            LOG_ERROR("Failed to detect any devices");
+            return;
+        }
+
+        // Create device
+        {
             // Flags
             UINT device_flags = 0;
-            #ifdef DEBUG // Enable debug layer
-            device_flags |= D3D11_CREATE_DEVICE_DEBUG;
-            #endif
+            // Enable debug layer
+            if (m_rhi_context->debug)
+            {
+                device_flags |= D3D11_CREATE_DEVICE_DEBUG;
+            }
 
             // The order of the feature levels that we'll try to create a device with
             vector<D3D_FEATURE_LEVEL> feature_levels =
@@ -78,247 +79,153 @@ namespace Spartan
                 D3D_FEATURE_LEVEL_9_1
             };
 
-            auto adapter = static_cast<IDXGIAdapter*>(m_primaryAdapter->data);
+            auto adapter = static_cast<IDXGIAdapter*>(physical_device->GetData());
             auto driver_type = adapter ? D3D_DRIVER_TYPE_UNKNOWN : D3D_DRIVER_TYPE_HARDWARE;
 
             auto create_device = [this, &adapter, &driver_type, &device_flags, &feature_levels]()
             {
-                return D3D11CreateDevice(
-                    adapter,									// pAdapter: If nullptr, the default adapter will be used
-                    driver_type,								// DriverType
-                    nullptr,									// HMODULE: nullptr because DriverType = D3D_DRIVER_TYPE_HARDWARE
-                    device_flags,								// Flags
-                    feature_levels.data(),						// pFeatureLevels
-                    static_cast<UINT>(feature_levels.size()),	// FeatureLevels
-                    D3D11_SDK_VERSION,							// SDKVersion
-                    &m_rhi_context->device,						// ppDevice
-                    nullptr,									// pFeatureLevel
-                    &m_rhi_context->device_context				// ppImmediateContext
+                ID3D11Device* temp_device = nullptr;
+                ID3D11DeviceContext* temp_context = nullptr;
+
+                const HRESULT result = D3D11CreateDevice(
+                    adapter,                                    // pAdapter: If nullptr, the default adapter will be used
+                    driver_type,                                // DriverType
+                    nullptr,                                    // HMODULE: nullptr because DriverType = D3D_DRIVER_TYPE_HARDWARE
+                    device_flags,                                // Flags
+                    feature_levels.data(),                        // pFeatureLevels
+                    static_cast<UINT>(feature_levels.size()),    // FeatureLevels
+                    D3D11_SDK_VERSION,                            // SDKVersion
+                    &temp_device,                                // ppDevice
+                    nullptr,                                    // pFeatureLevel
+                    &temp_context                                // ppImmediateContext
                 );
+
+                if (SUCCEEDED(result))
+                {
+                    // Query old device for newer interface.
+                    if (!d3d11_utility::error_check(temp_device->QueryInterface(__uuidof(ID3D11Device5), (void**)&m_rhi_context->device)))
+                        return E_FAIL;
+
+                    // Release old device.
+                    d3d11_utility::release(temp_device);
+
+                    // Query old device context for newer interface.
+                    if (!d3d11_utility::error_check(temp_context->QueryInterface(__uuidof(ID3D11DeviceContext4), (void**)&m_rhi_context->device_context)))
+                        return E_FAIL;
+
+                    // Release old context.
+                    d3d11_utility::release(temp_context);
+                }
+
+                return result;
             };
 
-			// Create Direct3D device and Direct3D device context.
+            // Create Direct3D device and Direct3D device context.
             auto result = create_device();
 
             // Using the D3D11_CREATE_DEVICE_DEBUG flag, requires the SDK to be installed, so try again without it
             if (result == DXGI_ERROR_SDK_COMPONENT_MISSING)
             {
-                LOGF_WARNING("Failed to create device with D3D11_CREATE_DEVICE_DEBUG flags as it requires the DirectX SDK to be installed. Attempting to create a device without it.");
+                LOG_WARNING("Failed to create device with D3D11_CREATE_DEVICE_DEBUG flags as it requires the DirectX SDK to be installed. Attempting to create a device without it.");
                 device_flags &= ~D3D11_CREATE_DEVICE_DEBUG;
                 result = create_device();
             }
 
-			if (FAILED(result))
-			{
-				LOGF_ERROR("Failed to create device, %s.", D3D11_Common::dxgi_error_to_string(result));
-				return;
-			}
-		}
+            if (FAILED(result))
+            {
+                LOG_ERROR("Failed to create device, %s.", d3d11_utility::dxgi_error_to_string(result));
+                return;
+            }
+        }
 
-		// Log feature level
-		{
-			auto log_feature_level = [this](const std::string& level)
-			{
-                auto& settings = m_context->GetSubsystem<Settings>();
-                settings->m_versionGraphicsAPI = level;
-                Log::m_caller_name.clear();
-				Log::Write("Spartan::RHI_Device: DirectX " + settings->m_versionGraphicsAPI, Log_Info);
-			};
+        // Log feature level
+        {
+            auto log_feature_level = [this](const std::string& level)
+            {
+                auto settings = m_context->GetSubsystem<Settings>();
+                settings->RegisterThirdPartyLib("DirectX", level, "https://www.microsoft.com/en-us/download/details.aspx?id=17431");
+                LOG_INFO("DirectX %s", level.c_str());
+            };
 
-			switch (m_rhi_context->device->GetFeatureLevel())
-			{
-				case D3D_FEATURE_LEVEL_9_1:
-					log_feature_level("9.1");
-					break;
+            switch (m_rhi_context->device->GetFeatureLevel())
+            {
+                case D3D_FEATURE_LEVEL_9_1:
+                    log_feature_level("9.1");
+                    break;
 
-				case D3D_FEATURE_LEVEL_9_2:
-					log_feature_level("9.2");
-					break;
+                case D3D_FEATURE_LEVEL_9_2:
+                    log_feature_level("9.2");
+                    break;
 
-				case D3D_FEATURE_LEVEL_9_3:
-					log_feature_level("9.3");
-					break;
+                case D3D_FEATURE_LEVEL_9_3:
+                    log_feature_level("9.3");
+                    break;
 
-				case D3D_FEATURE_LEVEL_10_0:
-					log_feature_level("10.0");
-					break;
+                case D3D_FEATURE_LEVEL_10_0:
+                    log_feature_level("10.0");
+                    break;
 
-				case D3D_FEATURE_LEVEL_10_1:
-					log_feature_level("10.1");
-					break;
+                case D3D_FEATURE_LEVEL_10_1:
+                    log_feature_level("10.1");
+                    break;
 
-				case D3D_FEATURE_LEVEL_11_0:
-					log_feature_level("11.0");
-					break;
+                case D3D_FEATURE_LEVEL_11_0:
+                    log_feature_level("11.0");
+                    break;
 
-				case D3D_FEATURE_LEVEL_11_1:
-					log_feature_level("11.1");
-					break;
-				case D3D_FEATURE_LEVEL_12_0: break;
-				case D3D_FEATURE_LEVEL_12_1: break;
-				default: ;
-			}
-		}
+                case D3D_FEATURE_LEVEL_11_1:
+                    log_feature_level("11.1");
+                    break;
+                case D3D_FEATURE_LEVEL_12_0: break;
+                case D3D_FEATURE_LEVEL_12_1: break;
+                default: ;
+            }
+        }
 
-		// Multi-thread protection
-		if (multithread_protection)
-		{
-			ID3D11Multithread* multithread = nullptr;
-			if (SUCCEEDED(m_rhi_context->device_context->QueryInterface(__uuidof(ID3D11Multithread), reinterpret_cast<void**>(&multithread))))
-			{		
-				multithread->SetMultithreadProtected(TRUE);
-				multithread->Release();
-			}
-			else 
-			{
-				LOGF_ERROR("Failed to enable multi-threaded protection");
-			}
-		}
+        // Multi-thread protection
+        if (multithread_protection)
+        {
+            ID3D11Multithread* multithread = nullptr;
+            if (SUCCEEDED(m_rhi_context->device_context->QueryInterface(__uuidof(ID3D11Multithread), reinterpret_cast<void**>(&multithread))))
+            {        
+                multithread->SetMultithreadProtected(TRUE);
+                multithread->Release();
+            }
+            else 
+            {
+                LOG_ERROR("Failed to enable multi-threaded protection");
+            }
+        }
 
-		// Annotations
-		const auto result = m_rhi_context->device_context->QueryInterface(IID_PPV_ARGS(&m_rhi_context->annotation));
-		if (FAILED(result))
-		{
-			LOGF_ERROR("Failed to create ID3DUserDefinedAnnotation for event reporting, %s.", D3D11_Common::dxgi_error_to_string(result));
-			return;
-		}
+        // Annotations
+        if (m_rhi_context->debug)
+        {
+            const auto result = m_rhi_context->device_context->QueryInterface(IID_PPV_ARGS(&m_rhi_context->annotation));
+            if (FAILED(result))
+            {
+                LOG_ERROR("Failed to create ID3DUserDefinedAnnotation for event reporting, %s.", d3d11_utility::dxgi_error_to_string(result));
+                return;
+            }
+        }
 
-		m_initialized = true;
-	}
+        m_initialized = true;
+    }
 
-	RHI_Device::~RHI_Device()
-	{
-		safe_release(m_rhi_context->device_context);
-		safe_release(m_rhi_context->device);
-		safe_release(m_rhi_context->annotation);
-	}
+    RHI_Device::~RHI_Device()
+    {
+        d3d11_utility::release(m_rhi_context->device_context);
+        d3d11_utility::release(m_rhi_context->device);
+        d3d11_utility::release(m_rhi_context->annotation);
+    }
 
-	bool RHI_Device::ProfilingCreateQuery(void** query, const RHI_Query_Type type) const
-	{
-		if (!m_rhi_context->device)
-		{
-			LOG_ERROR_INVALID_INTERNALS();
-			return false;
-		}
+    bool RHI_Device::Queue_Submit(const RHI_Queue_Type type, void* cmd_buffer, void* wait_semaphore /*= nullptr*/, void* signal_semaphore /*= nullptr*/, void* wait_fence /*= nullptr*/, uint32_t wait_flags /*= 0*/) const
+    {
+        return true;
+    }
 
-		D3D11_QUERY_DESC desc;
-		ZeroMemory(&desc, sizeof(desc));
-		desc.Query			= (type == Query_Timestamp_Disjoint) ? D3D11_QUERY_TIMESTAMP_DISJOINT : D3D11_QUERY_TIMESTAMP;
-		desc.MiscFlags		= 0;
-		const auto result	= m_rhi_context->device->CreateQuery(&desc, reinterpret_cast<ID3D11Query**>(query));
-		if (FAILED(result))
-		{
-			LOG_ERROR("Failed to create ID3D11Query");
-			return false;
-		}
-
-		return true;
-	}
-
-	bool RHI_Device::ProfilingQueryStart(void* query_object) const
-	{
-		if (!query_object)
-		{
-			LOG_ERROR_INVALID_PARAMETER();
-			return false;
-		}
-
-		if (!m_rhi_context->device_context)
-		{
-			LOG_ERROR_INVALID_INTERNALS();
-			return false;
-		}
-
-		m_rhi_context->device_context->Begin(static_cast<ID3D11Query*>(query_object));
-		return true;
-	}
-
-	bool RHI_Device::ProfilingGetTimeStamp(void* query_object) const
-	{
-		if (!query_object)
-		{
-			LOG_ERROR_INVALID_PARAMETER();
-			return false;
-		}
-
-		if (!m_rhi_context->device_context)
-		{
-			LOG_ERROR_INVALID_INTERNALS();
-			return false;
-		}
-
-		m_rhi_context->device_context->End(static_cast<ID3D11Query*>(query_object));
-		return true;
-	}
-
-	float RHI_Device::ProfilingGetDuration(void* query_disjoint, void* query_start, void* query_end) const
-	{
-		if (!m_rhi_context->device_context)
-		{
-			LOG_ERROR_INVALID_INTERNALS();
-			return 0.0f;
-		}
-
-		// Wait for data to be available	
-		while (m_rhi_context->device_context->GetData(static_cast<ID3D11Query*>(query_disjoint), nullptr, 0, 0) == S_FALSE) {}
-
-		// Check whether timestamps were disjoint during the last frame
-		D3D10_QUERY_DATA_TIMESTAMP_DISJOINT disjoint_data;
-		m_rhi_context->device_context->GetData(static_cast<ID3D11Query*>(query_disjoint), &disjoint_data, sizeof(disjoint_data), 0);
-		if (disjoint_data.Disjoint)
-			return 0.0f;
-
-		// Get the query data		
-		UINT64 start_time	= 0;
-		UINT64 end_time		= 0;
-		m_rhi_context->device_context->GetData(static_cast<ID3D11Query*>(query_start), &start_time, sizeof(start_time), 0);
-		m_rhi_context->device_context->GetData(static_cast<ID3D11Query*>(query_end), &end_time, sizeof(end_time), 0);
-
-		// Convert to real time
-		const auto delta		= end_time - start_time;
-		const auto duration_ms	= (delta * 1000.0f) / static_cast<float>(disjoint_data.Frequency);
-
-		return duration_ms;
-	}
-
-	void RHI_Device::ProfilingReleaseQuery(void* query_object)
-	{
-		if (!query_object)
-			return;
-
-		safe_release(static_cast<ID3D11Query*>(query_object));
-	}
-
-	uint32_t RHI_Device::ProfilingGetGpuMemory()
-	{
-		if (auto adapter = static_cast<IDXGIAdapter3*>(m_primaryAdapter->data))
-		{
-            DXGI_ADAPTER_DESC adapter_desc = {};
-            auto result = adapter->GetDesc(&adapter_desc);
-			if (FAILED(result))
-			{
-                LOGF_ERROR("Failed to get adapter description, %s", D3D11_Common::dxgi_error_to_string(result));
-				return 0;
-			}
-			return static_cast<uint32_t>(adapter_desc.DedicatedVideoMemory / 1024 / 1024); // convert to MBs
-		}
-		return 0;
-	}
-
-	uint32_t RHI_Device::ProfilingGetGpuMemoryUsage()
-	{
-		if (auto adapter = static_cast<IDXGIAdapter3*>(m_primaryAdapter->data))
-		{
-			DXGI_QUERY_VIDEO_MEMORY_INFO info = {};
-            auto result = adapter->QueryVideoMemoryInfo(0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info);
-			if (FAILED(result))
-			{
-                LOGF_ERROR("Failed to get adapter memory info, %s", D3D11_Common::dxgi_error_to_string(result));
-				return 0;
-			}
-			return static_cast<uint32_t>(info.CurrentUsage / 1024 / 1024); // convert to MBs
-		}
-		return 0;
-	}
+    bool RHI_Device::Queue_Wait(const RHI_Queue_Type type) const
+    {
+        m_rhi_context->device_context->Flush();
+        return true;
+    }
 }
-#endif

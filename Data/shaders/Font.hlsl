@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -23,38 +23,29 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "Common.hlsl"
 //====================
 
-Texture2D textureAtlas 	: register(t0);
-SamplerState texSampler : register(s0);
-
-cbuffer MiscBuffer : register(b0)
-{
-	matrix mTransform;
-	float4 color;
-};
-
 Pixel_PosUv mainVS(Vertex_PosUv input)
 {
     Pixel_PosUv output;
-	
-    input.position.w 	= 1.0f;
-    output.position 	= mul(input.position, mTransform);
-    output.uv 			= input.uv;
-	
+    
+    input.position.w    = 1.0f;
+    output.position     = mul(input.position, g_view_projection_orthographic);
+    output.uv           = input.uv;
+    
     return output;
 }
 
 float4 mainPS(Pixel_PosUv input) : SV_TARGET
 {
-	float4 finalColor = float4(0.0f, 0.0f, 0.0f, 1.0f);
-	
-	// Sample text from texture atlas
-	finalColor.r = textureAtlas.Sample(texSampler, input.uv).r;
-	finalColor.g = finalColor.r;
-	finalColor.b = finalColor.r;
-	finalColor.a = finalColor.r;
-	
-	// Color it
-	finalColor *= color;
-	
-	return finalColor;
+    float4 color = float4(0.0f, 0.0f, 0.0f, 1.0f);
+    
+    // Sample text from texture atlas
+    color.r = tex_font_atlas.Sample(sampler_bilinear_wrap, input.uv).r;
+    color.g = color.r;
+    color.b = color.r;
+    color.a = color.r;
+    
+    // Color it
+    color *= g_color;
+    
+    return color;
 }

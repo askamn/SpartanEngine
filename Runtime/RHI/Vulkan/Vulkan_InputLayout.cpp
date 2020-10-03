@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,14 +19,10 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-//= IMPLEMENTATION ===============
-#include "../RHI_Implementation.h"
-#ifdef API_GRAPHICS_VULKAN
-//================================
-
 //= INCLUDES =====================
+#include "Spartan.h"
+#include "../RHI_Implementation.h"
 #include "../RHI_InputLayout.h"
-#include "../../Core/EngineDefs.h"
 //================================
 
 //==================
@@ -35,7 +31,6 @@ using namespace std;
 
 namespace Spartan
 {
-	RHI_InputLayout::~RHI_InputLayout() {}
-	bool RHI_InputLayout::_CreateResource(void* vertex_shader_blob) { return true; }
+    RHI_InputLayout::~RHI_InputLayout() {}
+    bool RHI_InputLayout::_CreateResource(void* vertex_shader_blob) { return true; }
 }
-#endif

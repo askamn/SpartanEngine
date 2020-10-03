@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -20,14 +20,10 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
 //= INCLUDES =============================
+#include "Spartan.h"
 #include "Audio.h"
 #include <fmod.hpp>
 #include <fmod_errors.h>
-#include <sstream>
-#include "../Core/Engine.h"
-#include "../Core/EventSystem.h"
-#include "../Core/Settings.h"
-#include "../Core/Context.h"
 #include "../Profiling/Profiler.h"
 #include "../World/Components/Transform.h"
 //========================================
@@ -44,29 +40,29 @@ namespace Spartan
 
     }
 
-	Audio::~Audio()
-	{
-		// Unsubscribe from events
-		UNSUBSCRIBE_FROM_EVENT(Event_World_Unload, [this](Variant) { m_listener = nullptr; });
+    Audio::~Audio()
+    {
+        // Unsubscribe from events
+        UNSUBSCRIBE_FROM_EVENT(EventType::WorldUnload, [this](Variant) { m_listener = nullptr; });
 
-		if (!m_system_fmod)
-			return;
+        if (!m_system_fmod)
+            return;
 
-		// Close FMOD
-		m_result_fmod = m_system_fmod->close();
-		if (m_result_fmod != FMOD_OK)
-		{
-			LogErrorFmod(m_result_fmod);
-			return;
-		}
+        // Close FMOD
+        m_result_fmod = m_system_fmod->close();
+        if (m_result_fmod != FMOD_OK)
+        {
+            LogErrorFmod(m_result_fmod);
+            return;
+        }
 
-		// Release FMOD
-		m_result_fmod = m_system_fmod->release();
-		if (m_result_fmod != FMOD_OK)
-		{
-			LogErrorFmod(m_result_fmod);
-		}
-	}
+        // Release FMOD
+        m_result_fmod = m_system_fmod->release();
+        if (m_result_fmod != FMOD_OK)
+        {
+            LogErrorFmod(m_result_fmod);
+        }
+    }
 
     bool Audio::Initialize()
     {
@@ -126,70 +122,66 @@ namespace Spartan
         const auto major = ss.str().erase(1, 4);
         const auto minor = ss.str().erase(0, 1).erase(2, 2);
         const auto rev = ss.str().erase(0, 3);
-        m_context->GetSubsystem<Settings>()->m_versionFMOD = major + "." + minor + "." + rev;
+        m_context->GetSubsystem<Settings>()->RegisterThirdPartyLib("FMOD", major + "." + minor + "." + rev, "https://www.fmod.com/download");
 
         // Get dependencies
-        m_profiler = m_context->GetSubsystem<Profiler>().get();
+        m_profiler = m_context->GetSubsystem<Profiler>();
 
         // Subscribe to events
-        SUBSCRIBE_TO_EVENT(Event_World_Unload, [this](Variant) { m_listener = nullptr; });
+        SUBSCRIBE_TO_EVENT(EventType::WorldUnload, [this](Variant) { m_listener = nullptr; });
    
         return true;
     }
 
-	void Audio::Tick(float delta_time)
-	{
-		// Don't play audio if the engine is not in game mode
-		if (!m_context->m_engine->EngineMode_IsSet(Engine_Game))
-			return;
+    void Audio::Tick(float delta_time)
+    {
+        // Don't play audio if the engine is not in game mode
+        if (!m_context->m_engine->EngineMode_IsSet(Engine_Game))
+            return;
 
-		if (!m_initialized)
-			return;
+        if (!m_initialized)
+            return;
 
-		TIME_BLOCK_START_CPU(m_profiler);
+        SCOPED_TIME_BLOCK(m_profiler);
 
-		// Update FMOD
-		m_result_fmod = m_system_fmod->update();
-		if (m_result_fmod != FMOD_OK)
-		{
-			LogErrorFmod(m_result_fmod);
-			return;
-		}
+        // Update FMOD
+        m_result_fmod = m_system_fmod->update();
+        if (m_result_fmod != FMOD_OK)
+        {
+            LogErrorFmod(m_result_fmod);
+            return;
+        }
 
-		//= 3D Attributes =============================================
-		if (m_listener)
-		{
-			auto position = m_listener->GetPosition();
-			auto velocity = Math::Vector3::Zero;
-			auto forward = m_listener->GetForward();
-			auto up = m_listener->GetUp();
+        if (m_listener)
+        {
+            auto position = m_listener->GetPosition();
+            auto velocity = Math::Vector3::Zero;
+            auto forward = m_listener->GetForward();
+            auto up = m_listener->GetUp();
 
-			// Set 3D attributes
-			m_result_fmod = m_system_fmod->set3DListenerAttributes(
-				0, 
-				reinterpret_cast<FMOD_VECTOR*>(&position), 
-				reinterpret_cast<FMOD_VECTOR*>(&velocity), 
-				reinterpret_cast<FMOD_VECTOR*>(&forward), 
-				reinterpret_cast<FMOD_VECTOR*>(&up)
-			);
-			if (m_result_fmod != FMOD_OK)
-			{
-				LogErrorFmod(m_result_fmod);
-				return;
-			}
-		}
-		//=============================================================
-
-		TIME_BLOCK_END(m_profiler);
-	}
+            // Set 3D attributes
+            m_result_fmod = m_system_fmod->set3DListenerAttributes(
+                0, 
+                reinterpret_cast<FMOD_VECTOR*>(&position), 
+                reinterpret_cast<FMOD_VECTOR*>(&velocity), 
+                reinterpret_cast<FMOD_VECTOR*>(&forward), 
+                reinterpret_cast<FMOD_VECTOR*>(&up)
+            );
+            if (m_result_fmod != FMOD_OK)
+            {
+                LogErrorFmod(m_result_fmod);
+                return;
+            }
+        }
+    }
 
     void Audio::SetListenerTransform(Transform* transform)
-	{
-		m_listener = transform;
-	}
+    {
+        m_listener = transform;
+    }
 
-	void Audio::LogErrorFmod(int error) const
-	{
-		LOG_ERROR("Audio::FMOD: " + string(FMOD_ErrorString(static_cast<FMOD_RESULT>(error))));
-	}
+    void Audio::LogErrorFmod(int error) const
+    {
+        LOG_ERROR("%s", FMOD_ErrorString(static_cast<FMOD_RESULT>(error)));
+    }
 }

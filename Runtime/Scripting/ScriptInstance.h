@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,46 +21,32 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #pragma once
 
-//= INCLUDES ============
-#include "Scripting.h"
-#include <memory>
-//=======================
-
-class asIScriptObject;
-class asIScriptFunction;
+//= INCLUDES ==============
+#include "../Logging/Log.h"
+//=========================
 
 namespace Spartan
 {
-	class Entity;
+    struct ScriptInstance
+    {
+        MonoAssembly* assembly      = nullptr;
+        MonoImage* image            = nullptr;
+        MonoClass* klass            = nullptr;
+        MonoObject* object          = nullptr;       
+        MonoMethod* method_start    = nullptr;
+        MonoMethod* method_update   = nullptr;
 
-	// Allows creation of a script instance and execution of it's class functions.
-	class ScriptInstance
-	{
-	public:
-		ScriptInstance();
-		~ScriptInstance();
+        template<class T>
+        bool SetValue(T* value, const std::string& name)
+        {
+            if (MonoClassField* field = mono_class_get_field_from_name(klass, name.c_str()))
+            {
+                mono_field_set_value(object, field, value);
+                return true;
+            }
 
-		bool Instantiate(const std::string& path, std::weak_ptr<Entity> entity, std::shared_ptr<Scripting> scriptEngine);
-		bool IsInstantiated()		{ return m_isInstantiated; }
-		const auto& GetScriptPath() { return m_scriptPath; }
-
-		void ExecuteStart();
-		void ExecuteUpdate(float delta_time);
-
-	private:
-		bool CreateScriptObject();
-
-		std::string m_scriptPath;
-		std::string m_className;
-		std::string m_constructorDeclaration;
-		std::string m_moduleName;
-		std::weak_ptr<Entity> m_entity;
-		std::shared_ptr<Module> m_module;
-		asIScriptObject* m_scriptObject				= nullptr;
-		asIScriptFunction* m_constructorFunction	= nullptr;
-		asIScriptFunction* m_startFunction			= nullptr;
-		asIScriptFunction* m_updateFunction			= nullptr;
-		std::shared_ptr<Scripting> m_scriptEngine	= nullptr;
-		bool m_isInstantiated						= false;
-	};
+            LOG_ERROR("Failed to set value for field %s", name.c_str());
+            return false;
+        }
+    };
 }

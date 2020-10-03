@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,14 +19,11 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-//= IMPLEMENTATION ===============
+//= INCLUDES =====================
+#include "Spartan.h"
 #include "../RHI_Implementation.h"
-#ifdef API_GRAPHICS_D3D11
-//================================
-
-//= INCLUDES ===============
 #include "../RHI_Pipeline.h"
-//==========================
+//================================
 
 //= NAMESPACES =====
 using namespace std;
@@ -34,20 +31,11 @@ using namespace std;
 
 namespace Spartan
 {
-	RHI_Pipeline::RHI_Pipeline(const shared_ptr<RHI_Device>& rhi_device, const RHI_PipelineState& pipeline_state)
-	{
-		m_rhi_device	= rhi_device;
-		m_state			= &pipeline_state;
-	}
+    RHI_Pipeline::RHI_Pipeline(const RHI_Device* rhi_device, RHI_PipelineState& pipeline_state, void* descriptor_set_layout)
+    {
+        m_rhi_device    = rhi_device;
+        m_state            = pipeline_state;
+    }
 
-	RHI_Pipeline::~RHI_Pipeline()
-	{
-
-	}
-
-	void RHI_Pipeline::UpdateDescriptorSets(RHI_Texture* texture /*= nullptr*/)
-	{
-
-	}
+    RHI_Pipeline::~RHI_Pipeline() = default;
 }
-#endif

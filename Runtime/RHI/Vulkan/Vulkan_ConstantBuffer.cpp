@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,15 +19,12 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-//= IMPLEMENTATION ===============
-#include "../RHI_Implementation.h"
-#ifdef API_GRAPHICS_VULKAN
-//================================
-
 //= INCLUDES =====================
+#include "Spartan.h"
+#include "../RHI_Implementation.h"
 #include "../RHI_ConstantBuffer.h"
 #include "../RHI_Device.h"
-#include "../../Logging/Log.h"
+#include "../RHI_CommandList.h"
 //================================
 
 //= NAMESPACES =====
@@ -36,69 +33,123 @@ using namespace std;
 
 namespace Spartan
 {
-	RHI_ConstantBuffer::~RHI_ConstantBuffer()
-	{
-		Vulkan_Common::buffer::destroy(m_rhi_device, m_buffer);
-		Vulkan_Common::memory::free(m_rhi_device, m_buffer_memory);
-	}
+    void RHI_ConstantBuffer::_destroy()
+    {
+        // Wait in case the buffer is still in use
+        m_rhi_device->Queue_WaitAll();
 
-	void* RHI_ConstantBuffer::Map() const
-	{
-		if (!m_rhi_device || !m_rhi_device->GetContextRhi()->device || !m_buffer_memory)
-		{
-			LOG_ERROR_INVALID_INTERNALS();
-			return nullptr;
-		}
+        // Unmap
+        if (m_mapped)
+        {
+            vmaUnmapMemory(m_rhi_device->GetContextRhi()->allocator, static_cast<VmaAllocation>(m_allocation));
+            m_mapped = nullptr;
+        }
 
-		void* ptr = nullptr;
-		auto result = vkMapMemory(m_rhi_device->GetContextRhi()->device, static_cast<VkDeviceMemory>(m_buffer_memory), 0, m_size, 0, reinterpret_cast<void**>(&ptr));
-		if (result != VK_SUCCESS)
-		{
-			LOGF_ERROR("Failed to map memory, %s", Vulkan_Common::to_string(result));
-			return nullptr;
-		}
+        // Destroy
+        vulkan_utility::buffer::destroy(m_buffer);
+    }
 
-		return ptr;
-	}
+    RHI_ConstantBuffer::RHI_ConstantBuffer(const std::shared_ptr<RHI_Device>& rhi_device, const string& name, bool is_dynamic /*= false*/)
+    {
+        m_rhi_device    = rhi_device;
+        m_name          = name;
+        m_is_dynamic    = is_dynamic;
+    }
 
-	bool RHI_ConstantBuffer::Unmap() const
-	{
-		if (!m_rhi_device || !m_rhi_device->GetContextRhi()->device || !m_buffer_memory)
-		{
-			LOG_ERROR_INVALID_INTERNALS();
-			return false;
-		}
+    bool RHI_ConstantBuffer::_create()
+    {
+        if (!m_rhi_device || !m_rhi_device->GetContextRhi()->device)
+        {
+            LOG_ERROR_INVALID_PARAMETER();
+            return false;
+        }
 
-		vkUnmapMemory(m_rhi_device->GetContextRhi()->device, static_cast<VkDeviceMemory>(m_buffer_memory));
-		return true;
-	}
+        // Destroy previous buffer
+        _destroy();
 
-	bool RHI_ConstantBuffer::_Create()
-	{
-		if (!m_rhi_device || !m_rhi_device->GetContextRhi()->device)
-		{
-			LOG_ERROR_INVALID_PARAMETER();
-			return false;
-		}
+        // Calculate required alignment based on minimum device offset alignment
+        size_t min_ubo_alignment = m_rhi_device->GetContextRhi()->device_properties.limits.minUniformBufferOffsetAlignment;
+        if (min_ubo_alignment > 0)
+        {
+            m_stride = static_cast<uint32_t>((m_stride + min_ubo_alignment - 1) & ~(min_ubo_alignment - 1));
+        }
+        m_size_gpu = m_offset_count * m_stride;
 
-		// Clear previous buffer
-		Vulkan_Common::buffer::destroy(m_rhi_device, m_buffer);
-		Vulkan_Common::memory::free(m_rhi_device, m_buffer_memory);
+        // Create buffer
+        VkMemoryPropertyFlags flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+        flags |= !m_persistent_mapping ? VK_MEMORY_PROPERTY_HOST_COHERENT_BIT : 0;
+        VmaAllocation allocation = vulkan_utility::buffer::create(m_buffer, m_size_gpu, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, flags, true);
+        if (!allocation)
+        {
+            LOG_ERROR("Failed to allocate buffer");
+            return false;
+        }
 
-		// Create buffer
-		VkBuffer buffer					= nullptr;
-		VkDeviceMemory buffer_memory	= nullptr;
-		if (!Vulkan_Common::buffer::create(m_rhi_device, buffer, buffer_memory, m_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT))
-		{
-			LOG_ERROR("Failed to create buffer");
-			return false;
-		}
+        m_allocation = static_cast<void*>(allocation);
 
-		// Save
-		m_buffer		= static_cast<void*>(buffer);
-		m_buffer_memory = static_cast<void*>(buffer_memory);
+        // Set debug name
+        vulkan_utility::debug::set_name(static_cast<VkBuffer>(m_buffer), "constant_buffer");
 
-		return true;
-	}
+        return true;
+    }
+
+    void* RHI_ConstantBuffer::Map()
+    {
+        if (!m_rhi_device || !m_rhi_device->GetContextRhi()->device)
+        {
+            LOG_ERROR_INVALID_INTERNALS();
+            return nullptr;
+        }
+
+        if (!m_allocation)
+        {
+            LOG_ERROR("Invalid allocation");
+            return nullptr;
+        }
+
+        if (!m_mapped)
+        {
+            if (!vulkan_utility::error::check(vmaMapMemory(m_rhi_device->GetContextRhi()->allocator, static_cast<VmaAllocation>(m_allocation), reinterpret_cast<void**>(&m_mapped))))
+            {
+                LOG_ERROR("Failed to map memory");
+                return nullptr;
+            }
+        }
+
+        return m_mapped;
+    }
+
+    bool RHI_ConstantBuffer::Unmap(const uint64_t offset /*= 0*/, const uint64_t size /*= 0*/)
+    {
+        if (!m_rhi_device || !m_rhi_device->GetContextRhi()->device)
+        {
+            LOG_ERROR_INVALID_INTERNALS();
+            return false;
+        }
+
+        if (!m_allocation)
+        {
+            LOG_ERROR("Invalid allocation");
+            return false;
+        }
+
+        if (m_persistent_mapping)
+        {
+            if (!vulkan_utility::error::check(vmaFlushAllocation(m_rhi_device->GetContextRhi()->allocator, static_cast<VmaAllocation>(m_allocation), offset, size != 0 ? size : VK_WHOLE_SIZE)))
+            {
+                LOG_ERROR("Failed to flush memory");
+                return false;
+            }
+        }
+        else
+        {
+            if (m_mapped)
+            {
+                vmaUnmapMemory(m_rhi_device->GetContextRhi()->allocator, static_cast<VmaAllocation>(m_allocation));
+                m_mapped = nullptr;
+            }
+        }
+
+        return true;
+    }
 }
-#endif

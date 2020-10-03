@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -26,16 +26,14 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "Widget.h"
 //=================
 
-namespace Spartan { class Context;}
-
 class Widget_ProgressDialog : public Widget
 {
 public:
-	Widget_ProgressDialog(Spartan::Context* contex);
-	~Widget_ProgressDialog() = default;
-	void Tick() override;
+    Widget_ProgressDialog(Editor* editor);
+    ~Widget_ProgressDialog() = default;
+    void Tick() override;
 
 private:
-	float m_progress;
-	std::string m_progressStatus;
+    float m_progress;
+    std::string m_progressStatus;
 };

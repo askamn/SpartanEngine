@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,34 +19,29 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-//= INCLUDES ==================
+//= INCLUDES =================
+#include "Spartan.h"
 #include "AudioListener.h"
 #include "../../Audio/Audio.h"
-#include "../../Core/Context.h"
-//=============================
+//============================
 
 namespace Spartan
 {
-	AudioListener::AudioListener(Context* context, Entity* entity, uint32_t id /*= 0*/) : IComponent(context, entity, id)
-	{
-		m_audio = nullptr;
-	}
+    AudioListener::AudioListener(Context* context, Entity* entity, uint32_t id /*= 0*/) : IComponent(context, entity, id)
+    {
+        m_audio = nullptr;
+    }
 
-	AudioListener::~AudioListener()
-	{
+    void AudioListener::OnInitialize()
+    {
+        m_audio = GetContext()->GetSubsystem<Audio>();
+    }
 
-	}
+    void AudioListener::OnTick(float delta_time)
+    {
+        if (!m_audio)
+            return;
 
-	void AudioListener::OnInitialize()
-	{
-		m_audio = GetContext()->GetSubsystem<Audio>().get();
-	}
-
-	void AudioListener::OnTick(float delta_time)
-	{
-		if (!m_audio)
-			return;
-
-		m_audio->SetListenerTransform(GetTransform());
-	}
+        m_audio->SetListenerTransform(GetTransform());
+    }
 }

@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -29,20 +29,20 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // Create editor
     Editor editor;
 
-	// Create window
-	Window::Create(hInstance, "Spartan " + std::string(engine_version));	
-	Window::Show();
+    // Create window
+    Window::Create(hInstance, "Spartan " + std::string(engine_version));
+    Window::Show();
 
     // Hook it up with the editor
     Window::g_on_message = [&editor](Spartan::WindowData& window_data) { editor.OnWindowMessage(window_data); };
 
     // Tick
-	while (Window::Tick()) 
-	{ 
-		editor.Tick();
-	}
+    while (Window::Tick())
+    {
+        editor.OnTick();
+    }
 
     // Exit
-	Window::Destroy();
+    Window::Destroy();
     return 0;
 }

@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -32,23 +32,23 @@ using namespace Spartan::Math;
 
 namespace _Widget_ProgressDialog
 {
-	static float width = 500.0f;
+    static float width = 500.0f;
 }
 
-Widget_ProgressDialog::Widget_ProgressDialog(Context* contex) : Widget(contex)
+Widget_ProgressDialog::Widget_ProgressDialog(Editor* editor) : Widget(editor)
 {
-	m_title			            = "Hold on...";
-	m_is_visible	            = false;
-	m_progress		            = 0.0f;
-    m_size                      = Vector2(_Widget_ProgressDialog::width, 83.0f);
-	m_flags	                    |= ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoDocking;
-    m_callback_begin_visibility = [this]()
+    m_title                = "Hold on...";
+    m_is_visible        = false;
+    m_progress            = 0.0f;
+    m_size              = Vector2(_Widget_ProgressDialog::width, 83.0f);
+    m_flags                |= ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoDocking;
+    m_callback_on_start = [this]()
     {
         // Determine if an operation is in progress
         ProgressReport& progressReport  = ProgressReport::Get();
-        bool is_loading_model           = progressReport.GetIsLoading(g_progress_model_importer);
-        bool is_loading_scene           = progressReport.GetIsLoading(g_progress_world);
-        bool in_progress                = is_loading_model || is_loading_scene;
+        const bool is_loading_model     = progressReport.GetIsLoading(g_progress_model_importer);
+        const bool is_loading_scene     = progressReport.GetIsLoading(g_progress_world);
+        const bool in_progress          = is_loading_model || is_loading_scene;
 
         // Acquire progress
         if (is_loading_model)
@@ -69,13 +69,13 @@ Widget_ProgressDialog::Widget_ProgressDialog(Context* contex) : Widget(contex)
 
 void Widget_ProgressDialog::Tick()
 {
-	if (!m_is_visible)
-		return;
+    if (!m_is_visible)
+        return;
 
-	// Show dialog
-	ImGui::SetWindowFocus();
-	ImGui::PushItemWidth(_Widget_ProgressDialog::width - ImGui::GetStyle().WindowPadding.x * 2.0f);
-	ImGui::ProgressBar(m_progress, ImVec2(0.0f, 0.0f));
-	ImGui::Text(m_progressStatus.c_str());
-	ImGui::PopItemWidth();
+    // Show dialog
+    ImGui::SetWindowFocus();
+    ImGui::PushItemWidth(_Widget_ProgressDialog::width - ImGui::GetStyle().WindowPadding.x * 2.0f);
+    ImGui::ProgressBar(m_progress, ImVec2(0.0f, 0.0f));
+    ImGui::Text(m_progressStatus.c_str());
+    ImGui::PopItemWidth();
 }

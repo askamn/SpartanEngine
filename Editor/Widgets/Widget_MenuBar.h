@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,23 +21,23 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #pragma once
 
-//= INCLUDES ======
+//= INCLUDES =============================
 #include "Widget.h"
 #include <memory>
-//=================
+#include "../WidgetsDeferred/FileDialog.h"
+//========================================
 
-class FileDialog;
 namespace Spartan { class Context; }
 
 class Widget_MenuBar : public Widget
 {
 public:
-	Widget_MenuBar(Spartan::Context* context);
-	void Tick() override;
+    Widget_MenuBar(Editor* editor);
+    void Tick() override;
 
 private:
-	void ShowFileDialog();
-	void ShowAboutWindow();
+    void ShowFileDialog() const;
+    void ShowAboutWindow() const;
 
-	std::unique_ptr<FileDialog> m_fileDialog;
+    std::unique_ptr<FileDialog> m_fileDialog;
 };

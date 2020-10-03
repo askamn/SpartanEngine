@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,145 +21,58 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #pragma once
 
-//= INCLUDES ==============================
+//= INCLUDES =====================
 #include <string>
 #include <functional>
 #include "../ImGui/Source/imgui.h"
-#include "../ImGui/Source/imgui_internal.h"
-#include "Profiling/Profiler.h"
-#include "Core/Context.h"
-//=========================================
+//================================
 
-namespace Spartan { class Context; }
+struct ImGuiWindow;
+class Editor;
+namespace Spartan { class Context; class Profiler; }
 
 class Widget
 {
 public:
-	Widget(Spartan::Context* context)
-    {
-        m_context   = context;
-        m_profiler  = m_context->GetSubsystem<Spartan::Profiler>().get();
-        m_window    = nullptr;
-    }
-	virtual ~Widget() = default;
+    Widget(Editor* editor);
+    virtual ~Widget() = default;
 
-	bool Begin()
-	{
-        // Callback
-        if (m_callback_begin_visibility)
-        {
-            m_callback_begin_visibility();
-        }
-
-		if (!m_is_window || !m_is_visible)
-			return false;
-
-        TIME_BLOCK_START_CPU_NAMED(m_profiler, m_title.c_str());
-
-        // Reset
-        m_var_pushes = 0;
-
-        // Callback
-        if (m_callback_begin_pre)
-        {
-            m_callback_begin_pre();
-        }
-
-        // Position
-        if (m_position.x != -1.0f && m_position.y != -1.0f)
-        {
-            ImGui::SetNextWindowPos(m_position);
-        }
-
-        // Padding
-        if (m_padding.x != -1.0f && m_padding.y != -1.0f)
-        {
-            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, m_padding);
-            m_var_pushes++;
-        }
-
-        // Alpha
-        if (m_alpha != -1.0f)
-        {
-            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, m_alpha);
-            m_var_pushes++;
-        }
-
-        // Size
-        if (m_size.x != -1.0f && m_size.y != -1.0f)
-        {
-            ImGui::SetNextWindowSize(m_size, ImGuiCond_FirstUseEver);
-        }
-
-        // Max size
-        if ((m_size.x != -1.0f && m_size.y != -1.0f) || (m_size_max.x != FLT_MAX && m_size_max.y != FLT_MAX))
-        {
-            ImGui::SetNextWindowSizeConstraints(m_size, m_size_max);
-        }
-
-        // Begin
-		ImGui::Begin(m_title.c_str(), &m_is_visible, m_flags);
-		m_window_begun = true;
-
-        if (m_callback_begin_post)
-        {
-            m_callback_begin_post();
-        }
-
-		return true;
-	}
-
-	virtual void Tick() = 0;
-
-	bool End()
-	{
-        if (!m_window_begun)
-            return false;
-
-		m_window = ImGui::GetCurrentWindow();
-		m_height = ImGui::GetWindowHeight();
-
-        // End
-		ImGui::End();
-        ImGui::PopStyleVar(m_var_pushes);
-		m_window_begun = false;
-
-        TIME_BLOCK_END(m_profiler);
-
-		return true;
-	}
+    bool Begin();
+    virtual void Tick() = 0;
+    bool End();
 
     template<typename T>
     void PushStyleVar(ImGuiStyleVar idx, T val) { ImGui::PushStyleVar(idx, val); m_var_pushes++; }
 
     // Properties
-	auto IsWindow()					   { return m_is_window; }
-	auto& GetVisible()				   { return m_is_visible; }
-	void SetVisible(bool is_visible)   { m_is_visible = is_visible; }
-	auto GetHeight()				   { return m_height; }
-	auto GetWindow()		           { return m_window; }
-	const auto& GetTitle()	           { return m_title; }
+    bool IsWindow()                     const { return m_is_window; }
+    bool& GetVisible()                          { return m_is_visible; }
+    void SetVisible(bool is_visible)          { m_is_visible = is_visible; }
+    float GetHeight()                   const { return m_height; }
+    ImGuiWindow* GetWindow()            const { return m_window; }
+    const auto& GetTitle()              const { return m_title; }
 
 protected:
-	bool m_is_visible	                                = true;
-	bool m_is_window                                    = true;	
-	int m_flags	                                        = ImGuiWindowFlags_NoCollapse;
-	float m_height		                                = 0;
-    float m_alpha                                       = -1.0f;
-    Spartan::Math::Vector2 m_position                   = Spartan::Math::Vector2(-1.0f);
-    Spartan::Math::Vector2 m_size                       = Spartan::Math::Vector2(-1.0f);
-    Spartan::Math::Vector2 m_size_max                   = Spartan::Math::Vector2(FLT_MAX, FLT_MAX);
-    Spartan::Math::Vector2 m_padding                    = Spartan::Math::Vector2(-1.0f);
-    std::function<void()> m_callback_begin_visibility   = nullptr;
-    std::function<void()> m_callback_begin_pre          = nullptr;
-    std::function<void()> m_callback_begin_post         = nullptr;
+    bool m_is_visible                            = true;
+    bool m_is_window                            = true;    
+    int m_flags                                    = ImGuiWindowFlags_NoCollapse;
+    float m_height                                = 0;
+    float m_alpha                               = -1.0f;
+    Spartan::Math::Vector2 m_position           = Spartan::Math::Vector2(-1.0f);
+    Spartan::Math::Vector2 m_size               = Spartan::Math::Vector2(-1.0f);
+    Spartan::Math::Vector2 m_size_max           = Spartan::Math::Vector2(FLT_MAX, FLT_MAX);
+    Spartan::Math::Vector2 m_padding            = Spartan::Math::Vector2(-1.0f);
+    std::function<void()> m_callback_on_start   = nullptr;
+    std::function<void()> m_callback_on_visible = nullptr;
+    std::function<void()> m_callback_on_begin   = nullptr;
 
-	Spartan::Context* m_context     = nullptr;
+    Editor* m_editor                = nullptr;
+    Spartan::Context* m_context     = nullptr;
     Spartan::Profiler* m_profiler   = nullptr;
-	ImGuiWindow* m_window           = nullptr;
+    ImGuiWindow* m_window           = nullptr;
     std::string m_title;
 
 private:
-	bool m_window_begun     = false;
+    bool m_begun            = false;
     uint8_t m_var_pushes    = 0;
 };

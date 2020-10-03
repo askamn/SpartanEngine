@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -18,189 +18,294 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
-							 
-//= TEXTURES ==========================================
-Texture2D tex_normal 					: register(t0);
-Texture2D tex_material 					: register(t1);
-Texture2D tex_depth 					: register(t2);
-Texture2D tex_ssao 						: register(t3);
-Texture2DArray light_depth_directional 	: register(t4);
-TextureCube light_depth_point 			: register(t5);
-Texture2D light_depth_spot 				: register(t6);
-//=====================================================
 
-//= SAMPLERS ==============================================
-SamplerState sampler_point_clamp 			: register(s0);
-SamplerComparisonState  sampler_cmp_depth 	: register(s1);
-SamplerState samplerLinear_clamp 			: register(s2);
-//=========================================================
+//= INCLUDES =========
+#include "Common.hlsl"
+//====================
 
-//= BUFFERS =====================================
-#define cascade_count 4
-cbuffer LightBuffer : register(b1)
+#if DIRECTIONAL
+static const uint light_array_size = 4;
+#else
+static const uint light_array_size = 1;
+#endif
+
+// Attenuation over distance
+float get_light_attenuation_distance(const Light light, const float3 position)
 {
-	matrix 	light_view_projection[cascade_count];
-	float3	color;
-	float	intensity;
-	float3	position;
-	float	range;
-	float3	direction;
-    float 	angle;
-	float 	bias;
-	float 	normal_bias;
-	float 	shadow_enabled;	
-	float	volumetric_lighting_enabled;
-	float 	screen_space_contact_shadows_enabled;
-	float3	padding_2;
-};
-//===============================================
+    float distance_to_pixel = length(position - light.position);
+    float attenuation       = saturate(1.0f - distance_to_pixel / light.far);
+    return attenuation * attenuation;
+}
 
-//= INCLUDES =====================      
-#include "BRDF.hlsl"              
+// Attenuation over angle (approaching the outer cone)
+float get_light_attenuation_angle(const Light light, const float3 direction)
+{
+    float light_dot_pixel   = dot(direction, light.direction);
+    float cutoffAngle       = 1.0f - light.angle;
+    float epsilon           = cutoffAngle - cutoffAngle * 0.9f;
+    float attenuation       = saturate((light_dot_pixel - cutoffAngle) / epsilon);
+    return attenuation * attenuation;
+}
+
+// Final attenuation for all suported lights
+float get_light_attenuation(const Light light, const float3 position)
+{
+    float attenuation = 0.0f;
+    
+    #if DIRECTIONAL
+    attenuation   = saturate(dot(-cb_light_direction.xyz, float3(0.0f, 1.0f, 0.0f)));
+    #elif POINT
+    attenuation   = get_light_attenuation_distance(light, position);
+    #elif SPOT
+    attenuation   = get_light_attenuation_distance(light, position) * get_light_attenuation_angle(light, cb_light_direction.xyz);
+    #endif
+
+    return attenuation;
+}
+
+float3 get_light_direction(Light light, Surface surface)
+{
+    float3 direction = 0.0f;
+    
+    #if DIRECTIONAL
+    direction   = normalize(cb_light_direction.xyz);
+    #elif POINT
+    direction   = normalize(surface.position - light.position);
+    #elif SPOT
+    direction   = normalize(surface.position - light.position);
+    #endif
+
+    return direction;
+}
+
+//= INCLUDES =====================
+#include "BRDF.hlsl"
 #include "ShadowMapping.hlsl"
 #include "VolumetricLighting.hlsl"
+#include "Fog.hlsl"
 //================================
 
-struct PixelOutputType
+[numthreads(thread_group_count_x, thread_group_count_y, 1)]
+void mainCS(uint3 thread_id : SV_DispatchThreadID)
 {
-	float4 diffuse		: SV_Target0;
-	float4 specular		: SV_Target1;
-	float4 volumetric	: SV_Target2;
-};
+    if (thread_id.x >= uint(g_resolution.x) || thread_id.y >= uint(g_resolution.y))
+        return;
 
-PixelOutputType mainPS(Pixel_PosUv input)
-{
-	PixelOutputType light_out;
-	light_out.diffuse 		= float4(0.0f, 0.0f, 0.0f, 0.0f);
-	light_out.specular 		= float4(0.0f, 0.0f, 0.0f, 0.0f);
-	light_out.volumetric 	= float4(0.0f, 0.0f, 0.0f, 0.0f);
-	float2 uv 				= input.uv;
-	
-	// Sample textures
-	float4 normal_sample 	= tex_normal.Sample(sampler_point_clamp, uv);
-	float4 material_sample  = tex_material.Sample(sampler_point_clamp, uv);
-	float depth_sample   	= tex_depth.Sample(sampler_point_clamp, uv).r;
-	float ssao_sample 		= tex_ssao.Sample(sampler_point_clamp, uv).r;
-	
-	// Post-proces samples	
-	float3 normal	= normal_decode(normal_sample.xyz);
-	float occlusion = normal_sample.w;
-	occlusion 		= min(occlusion, ssao_sample);
-	float metallic 	= material_sample.g;
-    bool is_sky 	= material_sample.a == 0.0f;
+    // Sample albedo
+    float4 sample_albedo = tex_albedo.Load(int3(thread_id.xy, 0));
 
-	// Compute camera to pixel vector
-    float3 position_world 	= get_world_position_from_depth(depth_sample, g_viewProjectionInv, input.uv);
-    float3 camera_to_pixel  = normalize(position_world - g_camera_position.xyz);
-	
-	// Fill in light struct with default values
-	Light light;
-	light.color 	= color;
-	light.position 	= position;
-	#if DIRECTIONAL
-	light.direction	= direction;
-	#elif POINT
-	light.direction	= normalize(position_world - light.position);
-	#elif SPOT
-	light.direction	= normalize(position_world - light.position);
-	#endif
-	light.intensity = intensity;
-	light.range 	= range;
-	light.angle 	= angle;
-	
-	// Shadow
-	float shadow = 1.0f;
-	if (shadow_enabled)
-	{
-		if (!is_sky)
-		{
-			shadow = Shadow_Map(uv, normal, depth_sample, position_world, bias, normal_bias, light);
-		}
+    // If this is a transparent pass, ignore all opaque pixels
+    #if TRANSPARENT
+    if (sample_albedo.a == 1.0f)
+        return;
+    #endif
 
-		if (volumetric_lighting_enabled)
-		{
-			light_out.volumetric.rgb = VolumetricLighting(light, position_world, uv);
-		}
-	}
+    const float2 uv = (thread_id.xy + 0.5f) / g_resolution;
+    
+    // Sample there rest of the textures
+    float4 sample_normal    = tex_normal.Load(int3(thread_id.xy, 0));
+    float4 sample_material  = tex_material.Load(int3(thread_id.xy, 0));
+    float sample_depth      = tex_depth.Load(int3(thread_id.xy, 0)).r;
+    #if TRANSPARENT
+    float sample_hbao       = 1.0f; // we don't do ao for transparents
+    #else
+    float sample_hbao       = tex_hbao.SampleLevel(sampler_point_clamp, uv, 0).r; // if hbao is disabled, the texture will be 1x1 white pixel, so we use a sampler
+    #endif
 
-	// Ignore sky (but after we have allowed for the volumetric light to affect it)
-    if (is_sky)
+    // Post-process samples
+    int mat_id      = round(sample_normal.a * 65535);
+    float occlusion = sample_material.a;
+
+        // Create material
+    Material material;
+    material.albedo                 = sample_albedo;
+    material.roughness              = sample_material.r;
+    material.metallic               = sample_material.g;
+    material.emissive               = sample_material.b;
+    material.clearcoat              = mat_clearcoat_clearcoatRough_aniso_anisoRot[mat_id].x;
+    material.clearcoat_roughness    = mat_clearcoat_clearcoatRough_aniso_anisoRot[mat_id].y;
+    material.anisotropic            = mat_clearcoat_clearcoatRough_aniso_anisoRot[mat_id].z;
+    material.anisotropic_rotation   = mat_clearcoat_clearcoatRough_aniso_anisoRot[mat_id].w;
+    material.sheen                  = mat_sheen_sheenTint_pad[mat_id].x;
+    material.sheen_tint             = mat_sheen_sheenTint_pad[mat_id].y;
+    material.occlusion              = min(occlusion, sample_hbao);
+    material.F0                     = lerp(0.04f, material.albedo.rgb, material.metallic);
+    material.is_sky                 = mat_id == 0;
+    
+    // Fill surface struct
+    Surface surface;
+    surface.uv                      = uv;
+    surface.depth                   = sample_depth;
+    surface.position                = get_position(surface.depth, surface.uv);
+    surface.normal                  = normal_decode(sample_normal.xyz);
+    surface.camera_to_pixel         = surface.position - g_camera_position.xyz;
+    surface.camera_to_pixel_length  = length(surface.camera_to_pixel);
+    surface.camera_to_pixel         = normalize(surface.camera_to_pixel);
+
+    // Fill light struct
+    Light light;
+    light.color             = cb_light_color.rgb;
+    light.position          = cb_light_position.xyz;
+    light.near              = 0.1f;
+    light.intensity         = cb_light_intensity_range_angle_bias.x;
+    light.far               = cb_light_intensity_range_angle_bias.y;
+    light.angle             = cb_light_intensity_range_angle_bias.z;
+    light.bias              = cb_light_intensity_range_angle_bias.w;
+    light.normal_bias       = cb_light_normal_bias;
+    light.distance_to_pixel = length(surface.position - light.position);
+    light.direction         = get_light_direction(light, surface);
+    light.attenuation       = get_light_attenuation(light, surface.position);
+
+    // Pre-compute n_dot_l since it's used in many places
+    surface.n_dot_l = saturate(dot(surface.normal, -light.direction));
+    
+    // Shadows
+    float4 shadow = 1.0f;
     {
-		return light_out;
+        // Shadow mapping
+        #if SHADOWS
+        {
+            shadow = Shadow_Map(surface, light);
+        }
+        #endif
+        
+        // Screen space shadows
+        #if SHADOWS_SCREEN_SPACE
+        {
+            shadow.a = min(shadow.a, ScreenSpaceShadows(surface, light));
+        }
+        #endif
+
+        // Ensure that the shadow is as transparent as the material
+        #if TRANSPARENT
+        shadow.a = clamp(shadow.a, material.albedo.a, 1.0f);
+        #endif
     }
 
-	// Mix shadow with ssao and modulate light's intensity
-	shadow = min(shadow, occlusion);
-	light.intensity *= shadow;
-		
-	#if DIRECTIONAL
-		// Save shadows in the diffuse's alpha channel (used to modulate IBL later)
-		light_out.diffuse.a = shadow;
-	#endif
-	
-	#if POINT
-        // Attunate
-        float dist         = length(position_world - light.position);
-        float attenuation  = saturate(1.0f - dist / range);
-        light.intensity    *= attenuation * attenuation;
-		
-		// Erase light if there is no need to compute it
-		light.intensity *=step(dist, range);
-	#endif
-	
-	#if SPOT
-		// Attunate
-        float cutoffAngle   = 1.0f - light.angle;      
-        float dist          = length(position_world - light.position);
-        float theta         = dot(direction, light.direction);
-        float epsilon       = cutoffAngle - cutoffAngle * 0.9f;
-        float attenuation 	= saturate((theta - cutoffAngle) / epsilon); // atteunate when approaching the outer cone
-        attenuation         *= saturate(1.0f - dist / light.range);
-        light.intensity 	*= attenuation * attenuation;
-		
-		// Erase light if there is no need to compute it
-		light.intensity *= step(theta, cutoffAngle);
-	#endif
-	
-	// Accumulate total light amount hitting that pixel (used to modulate ssr later)
-	light_out.specular.a = light.intensity;
+    float3 light_diffuse    = 0.0f;
+    float3 light_specular   = 0.0f;
+    float3 light_volumetric = 0.0f;
+    
+    // Compute multi-bounce ambient occlusion
+    float3 multi_bounce_ao = MultiBounceAO(material.occlusion, sample_albedo.rgb);
 
-	// Diffuse color for BRDFs which will allow for diffuse and specular light to be multiplied by albedo later
-	float3 diffuse_color = float3(1,1,1);
-	
-	// Create material
-	Material material;
-	material.roughness  		= material_sample.r;
-	material.metallic   		= material_sample.g;
-	material.emissive   		= material_sample.b;
-	material.F0 				= lerp(0.04f, diffuse_color, material.metallic);
+    // Compute final radiance
+    light.radiance = light.color * light.intensity * light.attenuation * surface.n_dot_l * shadow.rgb * shadow.a * multi_bounce_ao;
 
-	// Reflectance equation
-	if (light.intensity > 0.0f)
-	{
-		// Compute some stuff
-		float3 l		= -light.direction;
-		float3 v 		= -camera_to_pixel;
-		float3 h 		= normalize(v + l);
-		float v_dot_h 	= saturate(dot(v, h));
-		float n_dot_v 	= saturate(dot(normal, v));
-		float n_dot_l 	= saturate(dot(normal, l));
-		float n_dot_h 	= saturate(dot(normal, h));
-		float3 radiance	= light.color * light.intensity * n_dot_l;
+    // Reflectance equation
+    [branch]
+    if (any(light.radiance) && !material.is_sky)
+    {
+        // Compute some vectors and dot products
+        float3 l        = -light.direction;
+        float3 v        = -surface.camera_to_pixel;
+        float3 h        = normalize(v + l);
+        float l_dot_h   = saturate(dot(l, h));
+        float v_dot_h   = saturate(dot(v, h));
+        float n_dot_v   = saturate(dot(surface.normal, v));
+        float n_dot_l   = surface.n_dot_l;
+        float n_dot_h   = saturate(dot(surface.normal, h));
 
-		// BRDF components
-		float3 F 			= 0.0f;
-		float3 cDiffuse 	= BRDF_Diffuse(diffuse_color, material, n_dot_v, n_dot_l, v_dot_h);	
-		float3 cSpecular 	= BRDF_Specular(material, n_dot_v, n_dot_l, n_dot_h, v_dot_h, F);
-				
-		// Ensure energy conservation
-		float3 kS 	= F;							// The energy of light that gets reflected - Equal to Fresnel
-		float3 kD 	= 1.0f - kS; 					// Remaining energy, light that gets refracted			
-		kD 			*= 1.0f - material.metallic; 	// Multiply kD by the inverse metalness such that only non-metals have diffuse lighting		
-		
-		light_out.diffuse.rgb	= kD * cDiffuse * radiance;
-		light_out.specular.rgb	= cSpecular * radiance;
-	}
+        float3 diffuse_energy       = 1.0f;
+        float3 reflective_energy    = 1.0f;
+        
+        // Specular
+        if (material.anisotropic == 0.0f)
+        {
+            light_specular += BRDF_Specular_Isotropic(material, n_dot_v, n_dot_l, n_dot_h, v_dot_h, diffuse_energy, reflective_energy);
+        }
+        else
+        {
+            light_specular += BRDF_Specular_Anisotropic(material, surface, v, l, h, n_dot_v, n_dot_l, n_dot_h, l_dot_h, diffuse_energy, reflective_energy);
+        }
 
-	return light_out;
+        // Specular clearcoat
+        if (material.clearcoat != 0.0f)
+        {
+            light_specular += BRDF_Specular_Clearcoat(material, n_dot_h, v_dot_h, diffuse_energy, reflective_energy);
+        }
+
+        // Sheen;
+        if (material.sheen != 0.0f)
+        {
+            light_specular += BRDF_Specular_Sheen(material, n_dot_v, n_dot_l, n_dot_h, diffuse_energy, reflective_energy);
+        }
+        
+        // Diffuse
+        light_diffuse += BRDF_Diffuse(material, n_dot_v, n_dot_l, v_dot_h);
+
+        // Tone down diffuse such as that only non metals have it
+        light_diffuse *= diffuse_energy;
+
+        /* Light - Subsurface scattering fast approximation - Will activate soon
+        #if TRANSPARENT
+        {
+            const float thickness_edge  = 0.1f;
+            const float thickness_face  = 1.0f;
+            const float distortion      = 0.65f;
+            const float ambient         = 1.0f - material.albedo.a;
+            const float scale           = 1.0f;
+            const float power           = 0.8f;
+            
+            float thickness = lerp(thickness_edge, thickness_face, n_dot_v);
+            float3 h        = normalize(l + surface.normal * distortion);
+            float v_dot_h   = pow(saturate(dot(v, -h)), power) * scale;
+            float intensity = (v_dot_h + ambient) * thickness;
+            
+            light_diffuse += material.albedo.rgb * light.color * intensity;
+        }
+        #endif
+        */
+
+        // Light - Reflection
+        #if SCREEN_SPACE_REFLECTIONS
+        float2 sample_ssr = tex_ssr.Load(int3(thread_id.xy, 0)).xy;
+        [branch]
+        if (sample_ssr.x * sample_ssr.y != 0.0f)
+        {
+            // saturate as reflections will accumulate int tex_frame overtime, causing more light to go out that it comes in.
+            float3 light_reflection = saturate(tex_frame.SampleLevel(sampler_bilinear_clamp, sample_ssr, 0).rgb);
+            light_reflection *= 1.0f - material.roughness; // fade with roughness as we don't have blurry screen space reflections yet
+            light_diffuse += light_reflection * diffuse_energy;
+            light_specular += light_reflection * reflective_energy;
+        }
+        #endif
+    }
+
+    // Volumetric lighting
+    #if VOLUMETRIC
+    {
+        light_volumetric += VolumetricLighting(surface, light) * light.color * light.intensity * get_fog_factor(surface);
+    }
+    #endif
+    
+     // Light - Emissive
+    float3 light_emissive = material.emissive * material.albedo.rgb * 50.0f;
+    
+    // Light - Refraction
+    float3 light_refraction = 0.0f;
+    #if TRANSPARENT
+    {
+        float ior               = 1.5; // glass
+        float2 normal2D         = mul((float3x3)g_view, sample_normal.xyz).xy;
+        float2 refraction_uv    = uv + normal2D * ior * 0.03f;
+    
+        // Only refract what's behind the surface
+        [branch]
+        if (get_linear_depth(refraction_uv) > get_linear_depth(surface.depth))
+        {
+            light_refraction = tex_frame.SampleLevel(sampler_bilinear_clamp, refraction_uv, 0).rgb;
+        }
+        else
+        {
+            light_refraction = tex_frame.Load(int3(thread_id.xy, 0)).rgb;
+        }
+    
+        light_refraction = lerp(light_refraction, light_diffuse, material.albedo.a);
+    }
+    #endif
+    
+    tex_out_rgb[thread_id.xy]   += saturate_16(light_diffuse * light.radiance + light_emissive + light_refraction);
+    tex_out_rgb2[thread_id.xy]  += saturate_16(light_specular * light.radiance);
+    tex_out_rgb3[thread_id.xy]  += saturate_16(light_volumetric);
 }

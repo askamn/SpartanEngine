@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,32 +21,39 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #pragma once
 
-//= INCLUDES ==============================
+//= INCLUDES ==========
 #include "IComponent.h"
-#include "../../Scripting/ScriptInstance.h"
-//=========================================
+//=====================
 
 namespace Spartan
 {
-	class SPARTAN_CLASS Script : public IComponent
-	{
-	public:
-		Script(Context* context, Entity* entity, uint32_t id = 0);
-		~Script();
+    // FORWARD DECLERATIONS =
+    class Scripting;
+    struct ScriptInstance;
+    //=======================
 
-		//= ICOMPONENT ===============================
-		void OnStart() override;
-		void OnTick(float delta_time) override;
-		void Serialize(FileStream* stream) override;
-		void Deserialize(FileStream* stream) override;
-		//============================================
+    class SPARTAN_CLASS Script : public IComponent
+    {
+    public:
+        Script(Context* context, Entity* entity, uint32_t id = 0);
+        ~Script() = default;
 
-		bool SetScript(const std::string& filePath);
-		std::string GetScriptPath();
-		std::string GetName();
+        //= ICOMPONENT ===============================
+        void OnStart() override;
+        void OnTick(float delta_time) override;
+        void Serialize(FileStream* stream) override;
+        void Deserialize(FileStream* stream) override;
+        //============================================
 
-	private:
-		std::shared_ptr<ScriptInstance> m_scriptInstance;
-		std::string m_name;
-	};
+        bool SetScript(const std::string& file_path);
+        std::string GetScriptPath() const;
+        std::string GetName() const;
+
+    private:
+        std::string m_name;
+        std::string m_file_path;
+        Scripting* m_scripting              = nullptr;
+        ScriptInstance* m_script_instance   = nullptr;
+        uint32_t m_script_instance_id       = 0;
+    };
 }

@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,39 +21,34 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #pragma once
 
-//= INCLUDES ========================
+//= INCLUDES ==============================
 #include <vector>
 #include <string>
-#include "../../Core/EngineDefs.h"
 #include "../../RHI/RHI_Definition.h"
-//===================================
+#include "../../Core/Spartan_Definitions.h"
+//=========================================
 
 struct FIBITMAP;
 
 namespace Spartan
 {
-	class Context;
+    class Context;
 
-	class SPARTAN_CLASS ImageImporter
-	{
-	public:
-		ImageImporter(Context* context);
-		~ImageImporter();
+    class SPARTAN_CLASS ImageImporter
+    {
+    public:
+        ImageImporter(Context* context);
+        ~ImageImporter();
 
-		bool Load(const std::string& file_path, RHI_Texture* texture, bool generate_mipmaps = true);
+        bool Load(const std::string& file_path, RHI_Texture* texture, bool generate_mipmaps = true);
 
-	private:	
-		bool GetBitsFromFibitmap(std::vector<std::byte>* data, FIBITMAP* bitmap, uint32_t width, uint32_t height, uint32_t channels);
-		void GenerateMipmaps(FIBITMAP* bitmap, RHI_Texture* texture, uint32_t width, uint32_t height, uint32_t channels);
+    private:    
+        bool GetBitsFromFibitmap(std::vector<std::byte>* data, FIBITMAP* bitmap, uint32_t width, uint32_t height, uint32_t channels) const;
+        void GenerateMipmaps(FIBITMAP* bitmap, RHI_Texture* texture, uint32_t width, uint32_t height, uint32_t channels);
+        FIBITMAP* ApplyBitmapCorrections(FIBITMAP* bitmap) const;
+        FIBITMAP* _FreeImage_ConvertTo32Bits(FIBITMAP* bitmap) const;
+        FIBITMAP* _FreeImage_Rescale(FIBITMAP* bitmap, uint32_t width, uint32_t height) const;
 
-		uint32_t ComputeChannelCount(FIBITMAP* bitmap) const;
-		uint32_t ComputeBitsPerChannel(FIBITMAP* bitmap) const;
-		RHI_Format ComputeTextureFormat(uint32_t bpp, uint32_t channels) const;
-		bool IsGrayscale(FIBITMAP* bitmap) const;
-		FIBITMAP* ApplyBitmapCorrections(FIBITMAP* bitmap) const;
-		FIBITMAP* _FreeImage_ConvertTo32Bits(FIBITMAP* bitmap) const;
-		FIBITMAP* _FreeImage_Rescale(FIBITMAP* bitmap, uint32_t width, uint32_t height) const;
-
-		Context* m_context;
-	};
+        Context* m_context = nullptr;
+    };
 }

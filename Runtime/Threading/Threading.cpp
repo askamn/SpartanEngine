@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,10 +19,10 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-//= INCLUDES ================
+//= INCLUDES =========
+#include "Spartan.h"
 #include "Threading.h"
-#include "../Core/Settings.h"
-//===========================
+//====================
 
 //= NAMESPACES =====
 using namespace std;
@@ -30,69 +30,101 @@ using namespace std;
 
 namespace Spartan
 {
-	Threading::Threading(Context* context) : ISubsystem(context)
-	{
-		m_stopping		= false;
-        m_thread_max    = thread::hardware_concurrency();
-		m_thread_count	= m_thread_max - 1;
+    Threading::Threading(Context* context) : ISubsystem(context)
+    {
+        m_stopping                                = false;
+        m_thread_count_support                  = thread::hardware_concurrency();
+        m_thread_count                          = m_thread_count_support - 1; // exclude the main (this) thread
+        m_thread_names[this_thread::get_id()]   = "main";
 
-		for (uint32_t i = 0; i < m_thread_count; i++)
-		{
-			m_threads.emplace_back(thread(&Threading::Invoke, this));
-		}
-		LOGF_INFO("%d threads have been created", m_thread_count);
-	}
+        for (uint32_t i = 0; i < m_thread_count; i++)
+        {
+            m_threads.emplace_back(thread(&Threading::ThreadLoop, this));
+            m_thread_names[m_threads.back().get_id()] = "worker_" + to_string(i);
+        }
 
-	Threading::~Threading()
-	{
-		// Put unique lock on task mutex.
-		unique_lock<mutex> lock(m_tasksMutex);
+        LOG_INFO("%d threads have been created", m_thread_count);
+    }
 
-		// Set termination flag to true.
-		m_stopping = true;
+    Threading::~Threading()
+    {
+        Flush(true);
 
-		// Unlock the mutex
-		lock.unlock();
+        // Put unique lock on task mutex.
+        unique_lock<mutex> lock(m_mutex_tasks);
 
-		// Wake up all threads.
-		m_conditionVar.notify_all();
+        // Set termination flag to true.
+        m_stopping = true;
 
-		// Join all threads.
-		for (auto& thread : m_threads)
-		{
-			thread.join();
-		}
+        // Unlock the mutex
+        lock.unlock();
 
-		// Empty worker threads.
-		m_threads.clear();
-	}
+        // Wake up all threads.
+        m_condition_var.notify_all();
 
-	void Threading::Invoke()
-	{
-		shared_ptr<Task> task;
-		while (true)
-		{
-			// Lock tasks mutex
-			unique_lock<mutex> lock(m_tasksMutex);
+        // Join all threads.
+        for (auto& thread : m_threads)
+        {
+            thread.join();
+        }
 
-			// Check condition on notification
-			m_conditionVar.wait(lock, [this] { return !m_tasks.empty() || m_stopping; });
+        // Empty worker threads.
+        m_threads.clear();
+    }
 
-			// If m_stopping is true, it's time to shut everything down
-			if (m_stopping && m_tasks.empty())
-				return;
+    uint32_t Threading::GetThreadsAvailable() const
+    {
+        uint32_t available_threads = m_thread_count;
 
-			// Get next task in the queue.
-			task = m_tasks.front();
+        for (const auto& task : m_tasks)
+        {
+            available_threads -= task->IsExecuting() ? 1 : 0;
+        }
 
-			// Remove it from the queue.
-			m_tasks.pop();
+        return available_threads;
+    }
 
-			// Unlock the mutex
-			lock.unlock();
+    void Threading::Flush(bool removed_queued /*= false*/)
+    {
+        // Clear any queued tasks
+        if (removed_queued)
+        {
+            m_tasks.clear();
+        }
 
-			// Execute the task.
-			task->Execute();
-		}
-	}
+        // If so, wait for them
+        while (AreTasksRunning())
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+    }
+
+    void Threading::ThreadLoop()
+    {
+        shared_ptr<Task> task;
+        while (true)
+        {
+            // Lock tasks mutex
+            unique_lock<mutex> lock(m_mutex_tasks);
+
+            // Check condition on notification
+            m_condition_var.wait(lock, [this] { return !m_tasks.empty() || m_stopping; });
+
+            // If m_stopping is true, it's time to shut everything down
+            if (m_stopping && m_tasks.empty())
+                return;
+
+            // Get next task in the queue.
+            task = m_tasks.front();
+
+            // Remove it from the queue.
+            m_tasks.pop_front();
+
+            // Unlock the mutex
+            lock.unlock();
+
+            // Execute the task.
+            task->Execute();
+        }
+    }
 }

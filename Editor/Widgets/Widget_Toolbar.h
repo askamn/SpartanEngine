@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,19 +21,20 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #pragma once
 
-//= INCLUDES ===============
+//= INCLUDES ===========
 #include "Widget.h"
-#include <map>
-#include "../IconProvider.h"
-//==========================
+#include <unordered_map>
+//======================
+
+enum Icon_Type;
 
 class Widget_Toolbar : public Widget
 {
 public:
-	Widget_Toolbar(Spartan::Context* context);
-	void Tick() override;
+    Widget_Toolbar(Editor* editor);
+    void Tick() override;
 
 private:
-    std::map<Icon_Type, std::unique_ptr<Widget>> m_widgets;
+    std::unordered_map<Icon_Type, Widget*> m_widgets;
     float m_button_size = 20.0f;
 };

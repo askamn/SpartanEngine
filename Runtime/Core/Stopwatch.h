@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,25 +21,37 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #pragma once
 
-//= INCLUDES ==========
+//= INCLUDES ===================
 #include <chrono>
-#include "EngineDefs.h"
-//=====================
+#include "Spartan_Definitions.h"
+//==============================
 
 namespace Spartan
 {
-	class SPARTAN_CLASS Stopwatch
-	{
-	public:
-		Stopwatch();
-		~Stopwatch();
+    class SPARTAN_CLASS Stopwatch
+    {
+    public:
+        Stopwatch() { Start(); }
+        ~Stopwatch() = default;
 
-		void Start();
+        void Stopwatch::Start()
+        {
+            m_start = std::chrono::high_resolution_clock::now();
+        }
 
-		float GetElapsedTimeSec();
-		float GetElapsedTimeMs();
+        float Stopwatch::GetElapsedTimeSec() const
+        {
+            const std::chrono::duration<double, std::milli> ms = std::chrono::high_resolution_clock::now() - m_start;
+            return static_cast<float>(ms.count() / 1000);
+        }
 
-	private:
-		std::chrono::time_point<std::chrono::high_resolution_clock> m_start;
-	};
+        float Stopwatch::GetElapsedTimeMs() const
+        {
+            const std::chrono::duration<double, std::milli> ms = std::chrono::high_resolution_clock::now() - m_start;
+            return static_cast<float>(ms.count());
+        }
+
+    private:
+        std::chrono::time_point<std::chrono::high_resolution_clock> m_start;
+    };
 }

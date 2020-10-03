@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -24,52 +24,63 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //= INCLUDES ===============
 #include "ISubsystem.h"
 #include "../Math/Vector2.h"
+#include <vector>
 //==========================
 
 namespace Spartan
 {
     class Context;
 
-	class SPARTAN_CLASS Settings : public ISubsystem
-	{
-	public:
-		Settings(Context* context);
+    struct ThirdPartyLib
+    {
+        ThirdPartyLib(const std::string& name, const std::string& version, const std::string& url)
+        {
+            this->name      = name;
+            this->version   = version;
+            this->url       = url;
+        }
+
+        std::string name;
+        std::string version;
+        std::string url;
+    };
+
+    class SPARTAN_CLASS Settings : public ISubsystem
+    {
+    public:
+        Settings(Context* context);
         ~Settings();
 
         //= Subsystem =============
         bool Initialize() override;
         //=========================
 
-		//= MISC =====================================================
-		auto GetIsFullScreen() const	{ return m_is_fullscreen; }
-		auto GetIsMouseVisible() const	{ return m_is_mouse_visible; }
-		//============================================================
+        //= MISC =======================================================
+        bool GetIsFullScreen()      const { return m_is_fullscreen; }
+        bool GetIsMouseVisible()    const { return m_is_mouse_visible; }
+        bool Loaded()            const { return m_loaded; }
+        //==============================================================
 
-		// Third party lib versions
-		std::string m_versionAngelScript;
-		std::string m_versionAssimp;
-		std::string m_versionBullet;
-		std::string m_versionFMOD;
-		std::string m_versionFreeImage;
-		std::string m_versionFreeType;
-		std::string m_versionImGui;
-		std::string m_versionPugiXML = "1.90";
-		std::string m_versionGraphicsAPI;
+        void RegisterThirdPartyLib(const std::string& name, const std::string& version, const std::string& url);
+        const auto& GetThirdPartyLibs() const { return m_third_party_libs; }
 
     private:
         void Save() const;
-		void Load();
+        void Load();
 
         void Reflect();
-        void Map();
+        void Map() const;
 
-		bool m_is_fullscreen				= false;
-		bool m_is_mouse_visible				= true;
-		uint32_t m_shadow_map_resolution	= 0;
+        bool m_is_fullscreen                = false;
+        bool m_is_mouse_visible             = true;
+        uint32_t m_shadow_map_resolution    = 0;
+        uint64_t m_renderer_flags           = 0;
         Math::Vector2 m_resolution          = Math::Vector2::Zero;
-		uint32_t m_anisotropy				= 0;
-		uint32_t m_max_thread_count			= 0;
+        uint32_t m_anisotropy               = 0;
+        uint32_t m_max_thread_count         = 0;
         double m_fps_limit                  = 0;
+        bool m_loaded                       = false;
         Context* m_context                  = nullptr;
-	};
+        std::vector<ThirdPartyLib> m_third_party_libs;
+    };
 }

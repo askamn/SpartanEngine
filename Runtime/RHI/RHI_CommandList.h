@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,248 +21,172 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #pragma once
 
-//= INCLUDES =================
-#include <vector>
-#include "RHI_Texture.h"
-#include "RHI_Viewport.h"
+//= INCLUDES ===========================
+#include <array>
+#include <atomic>
 #include "RHI_Definition.h"
-#include "../Math/Vector4.h"
-#include "../Math/Rectangle.h"
-//============================
+#include "../Core/Spartan_Object.h"
+#include "../Rendering/Renderer_Enums.h"
+//======================================
 
 namespace Spartan
 {
-	class Profiler;
+    // Forward declarations
+    class Profiler;
+    class Renderer;
+    class Context;
+    namespace Math
+    {
+        class Rectangle;
+    }
 
-	enum RHI_Cmd_Type
-	{
-		RHI_Cmd_Begin,
-		RHI_Cmd_End,
-		RHI_Cmd_Draw,
-		RHI_Cmd_DrawIndexed,
-		RHI_Cmd_SetViewport,
-		RHI_Cmd_SetScissorRectangle,
-		RHI_Cmd_SetPrimitiveTopology,
-		RHI_Cmd_SetInputLayout,
-		RHI_Cmd_SetDepthStencilState,
-		RHI_Cmd_SetRasterizerState,
-		RHI_Cmd_SetBlendState,
-		RHI_Cmd_SetVertexBuffer,
-		RHI_Cmd_SetIndexBuffer,	
-		RHI_Cmd_SetVertexShader,
-		RHI_Cmd_SetPixelShader,
-        RHI_Cmd_SetComputeShader,
-		RHI_Cmd_SetConstantBuffers,
-		RHI_Cmd_SetSamplers,
-		RHI_Cmd_SetTextures,
-		RHI_Cmd_SetRenderTargets,
-		RHI_Cmd_ClearRenderTarget,
-		RHI_Cmd_ClearDepthStencil
-	};
+    enum class RHI_CommandListState : uint64_t
+    {
+        Idle,
+        Recording,
+        Submittable,
+        Submitted
+    };
 
-	struct RHI_Command
-	{
-		RHI_Command()
-		{
-			const uint32_t max_count = 10;
-			render_targets.reserve(max_count);
-			render_targets.resize(max_count);
-			samplers.reserve(max_count);
-			samplers.resize(max_count);
-			constant_buffers.reserve(max_count);
-			constant_buffers.resize(max_count);
-			Clear();
-		}
+    class SPARTAN_CLASS RHI_CommandList : public Spartan_Object
+    {
+    public:
+        RHI_CommandList(uint32_t index, RHI_SwapChain* swap_chain, Context* context);
+        ~RHI_CommandList();
+    
+        // Command list
+        bool Begin();
+        bool Stop();
+        bool Submit();
+        bool Wait();
+        bool Reset();
+        bool Flush()
+        {
+            if (m_cmd_state == RHI_CommandListState::Recording)
+            {
+                const bool has_render_pass = m_render_pass_active;
+                if (has_render_pass)
+                {
+                    if (!EndRenderPass())
+                        return false;
+                }
 
-		void Clear()
-		{
-			render_target_count			= 0;
-			textures_start_slot			= 0;
-			texture_count				= 0;
-			textures					= nullptr;
-			samplers_start_slot			= 0;
-			sampler_count				= 0;
-			constant_buffers_start_slot	= 0;
-			constant_buffer_count		= 0;
-			constant_buffers_scope		= Buffer_NotAssigned;
-			depth_stencil_state			= nullptr;
-			depth_stencil				= nullptr;
-			depth_clear					= 0;
-			depth_clear_stencil			= 0;
-			depth_clear_flags			= 0;
-			vertex_count				= 0;
-			vertex_offset				= 0;
-			index_count					= 0;
-			index_offset				= 0;
-			input_layout				= nullptr;
-			rasterizer_state			= nullptr;
-			blend_state					= nullptr;
-			buffer_index				= nullptr;
-			buffer_vertex				= nullptr;
-			shader_vertex				= nullptr;
-			shader_pixel				= nullptr;
-            shader_compute              = nullptr;
-			primitive_topology			= PrimitiveTopology_NotAssigned;
-            pass_name                   = "N/A";
-		}
+                if (!Stop())
+                    return false;
 
-		RHI_Cmd_Type type;
+                if (!Submit())
+                    return false;
 
-		// Render targets
-		uint32_t render_target_count = 0;
-		std::vector<void*> render_targets;
-		void* render_target_clear;
-		Math::Vector4 render_target_clear_color;
+                if (!Begin())
+                    return false;
 
-		// Texture
-		uint32_t textures_start_slot	= 0;
-		uint32_t texture_count			= 0;
-		const void* textures			= nullptr;
+                if (has_render_pass)
+                {
+                    if (!BeginRenderPass(*m_pipeline_state))
+                        return false;
+                }
+            }
 
-		// Samplers
-		uint32_t samplers_start_slot = 0;
-		uint32_t sampler_count = 0;
-		std::vector<void*> samplers;
+            m_flushed = true;
+            return true;
+        }
 
-		// Constant buffers
-		uint32_t constant_buffers_start_slot = 0;
-		uint32_t constant_buffer_count = 0;
-		RHI_Buffer_Scope constant_buffers_scope;
-		std::vector<void*> constant_buffers;	
+        // Render pass
+        bool BeginRenderPass(RHI_PipelineState& pipeline_state);
+        bool EndRenderPass();
 
-		// Depth
-		const RHI_DepthStencilState* depth_stencil_state	= nullptr;
-		void* depth_stencil									= nullptr;
-		float depth_clear									= 0;
-		uint32_t depth_clear_stencil						= 0;
-		uint32_t depth_clear_flags							= 0;
+        // Clear
+        void ClearPipelineStateRenderTargets(RHI_PipelineState& pipeline_state);
+        void ClearRenderTarget(RHI_Texture* texture, const uint32_t color_index = 0, const uint32_t depth_stencil_index = 0, const bool storage = false, const Math::Vector4& clear_color = rhi_color_load, const float clear_depth = rhi_depth_load, const uint32_t clear_stencil = rhi_stencil_load);
 
-		// Misc	
-		bool is_array                                   = true;
-		std::string pass_name                           = "N/A";
-		RHI_PrimitiveTopology_Mode primitive_topology	= PrimitiveTopology_NotAssigned;
-		uint32_t vertex_count							= 0;
-		uint32_t vertex_offset							= 0;
-		uint32_t index_count							= 0;
-		uint32_t index_offset							= 0;		
-		const RHI_InputLayout* input_layout				= nullptr;	
-		const RHI_RasterizerState* rasterizer_state		= nullptr;
-		const RHI_BlendState* blend_state				= nullptr;
-		const RHI_IndexBuffer* buffer_index				= nullptr;
-		const RHI_VertexBuffer* buffer_vertex			= nullptr;
-		const RHI_Shader* shader_vertex					= nullptr;
-		const RHI_Shader* shader_pixel					= nullptr;
-        const RHI_Shader* shader_compute            = nullptr;
-		RHI_Viewport viewport;
-		Math::Rectangle scissor_rectangle;
-	};
+        // Draw
+        bool Draw(uint32_t vertex_count);
+        bool DrawIndexed(uint32_t index_count, uint32_t index_offset = 0, uint32_t vertex_offset = 0);
+        
+        // Dispatch
+        bool Dispatch(uint32_t x, uint32_t y, uint32_t z, bool async = false);
+        
+        // Viewport
+        void SetViewport(const RHI_Viewport& viewport) const;
+        
+        // Scissor
+        void SetScissorRectangle(const Math::Rectangle& scissor_rectangle) const;
+        
+        // Vertex buffer
+        void SetBufferVertex(const RHI_VertexBuffer* buffer, const uint64_t offset = 0);
+        
+        // Index buffer
+        void SetBufferIndex(const RHI_IndexBuffer* buffer, const uint64_t offset = 0);
+        
+        // Constant buffer
+        bool SetConstantBuffer(const uint32_t slot, const uint8_t scope, RHI_ConstantBuffer* constant_buffer) const;
+        inline bool SetConstantBuffer(const uint32_t slot, const uint8_t scope, const std::shared_ptr<RHI_ConstantBuffer>& constant_buffer) const { return SetConstantBuffer(slot, scope, constant_buffer.get()); }
+        
+        // Sampler
+        void SetSampler(const uint32_t slot, RHI_Sampler* sampler) const;
+        inline void SetSampler(const uint32_t slot, const std::shared_ptr<RHI_Sampler>& sampler) const { SetSampler(slot, sampler.get()); }
+        
+        // Texture
+        void SetTexture(const uint32_t slot, RHI_Texture* texture, const bool storage = false);
+        inline void SetTexture(const RendererBindingsUav slot, RHI_Texture* texture)                        { SetTexture(static_cast<uint32_t>(slot), texture, true); }
+        inline void SetTexture(const RendererBindingsUav slot, const std::shared_ptr<RHI_Texture>& texture) { SetTexture(static_cast<uint32_t>(slot), texture.get(), true); }
+        inline void SetTexture(const RendererBindingsSrv slot, RHI_Texture* texture)                        { SetTexture(static_cast<uint32_t>(slot), texture, false); }
+        inline void SetTexture(const RendererBindingsSrv slot, const std::shared_ptr<RHI_Texture>& texture) { SetTexture(static_cast<uint32_t>(slot), texture.get(), false); }
+        
+        // Timestamps
+        bool Timestamp_Start(void* query_disjoint = nullptr, void* query_start = nullptr);
+        bool Timestamp_End(void* query_disjoint = nullptr, void* query_end = nullptr);
+        float Timestamp_GetDuration(void* query_disjoint, void* query_start, void* query_end, const uint32_t pass_index);
 
-	class SPARTAN_CLASS RHI_CommandList
-	{
-	public:
-		RHI_CommandList(const std::shared_ptr<RHI_Device>& rhi_device, Profiler* profiler);
-		~RHI_CommandList();
+        static uint32_t Gpu_GetMemory(RHI_Device* rhi_device);
+        static uint32_t Gpu_GetMemoryUsed(RHI_Device* rhi_device);
+        static bool Gpu_QueryCreate(RHI_Device* rhi_device, void** query = nullptr, RHI_Query_Type type = RHI_Query_Timestamp);
+        static void Gpu_QueryRelease(void*& query_object);
+        
+        // Misc
+        void ResetDescriptorCache();
+        void* GetResource_CommandBuffer()   const { return m_cmd_buffer; }
+        bool IsRecording()                  const { return m_cmd_state == RHI_CommandListState::Recording; }
+        bool IsSubmitted()                  const { return m_cmd_state == RHI_CommandListState::Submitted; }
+        bool IsIdle()                       const { return m_cmd_state == RHI_CommandListState::Idle; }
+        void*& GetProcessedSemaphore()            { return m_processed_semaphore; }
 
-		// Markers
-		void Begin(const std::string& pass_name, RHI_Pipeline* pipeline = nullptr);
-		void End();
+    private:
+        void Timeblock_Start(const RHI_PipelineState* pipeline_state);
+        void Timeblock_End(const RHI_PipelineState* pipeline_state);
+        bool Deferred_BeginRenderPass();
+        bool Deferred_BindPipeline();
+        bool Deferred_BindDescriptorSet();
+        bool OnDraw();
 
-		// Draw
-		void Draw(uint32_t vertex_count);
-		void DrawIndexed(uint32_t index_count, uint32_t index_offset, uint32_t vertex_offset);
+        std::atomic<RHI_CommandListState> m_cmd_state   = RHI_CommandListState::Idle;
+        RHI_Pipeline* m_pipeline                        = nullptr; 
+        RHI_SwapChain* m_swap_chain                     = nullptr;
+        Renderer* m_renderer                            = nullptr;
+        RHI_PipelineCache* m_pipeline_cache             = nullptr;
+        RHI_DescriptorCache* m_descriptor_cache         = nullptr;
+        RHI_PipelineState* m_pipeline_state             = nullptr;
+        RHI_Device* m_rhi_device                        = nullptr;
+        Profiler* m_profiler                            = nullptr;
+        void* m_cmd_buffer                              = nullptr;
+        void* m_processed_fence                         = nullptr;
+        void* m_processed_semaphore                     = nullptr;
+        void* m_query_pool                              = nullptr;
+        bool m_render_pass_active                       = false;
+        bool m_pipeline_active                          = false;
+        bool m_flushed                                  = false;
+        static bool memory_query_support;
+        std::mutex m_mutex_reset;
 
-		// Misc
-		void SetViewport(const RHI_Viewport& viewport);
-		void SetScissorRectangle(const Math::Rectangle& scissor_rectangle);
-		void SetPrimitiveTopology(RHI_PrimitiveTopology_Mode primitive_topology);
+        // Profiling
+        uint32_t m_timestamp_index = 0;
+        static const uint32_t m_max_timestamps = 256;
+        std::array<uint64_t, m_max_timestamps> m_timestamps;
 
-		// Input layout
-		void SetInputLayout(const RHI_InputLayout* input_layout);
-		void SetInputLayout(const std::shared_ptr<RHI_InputLayout>& input_layout) { SetInputLayout(input_layout.get()); }
-
-		// Depth-stencil state
-		void SetDepthStencilState(const RHI_DepthStencilState* depth_stencil_state);
-		void SetDepthStencilState(const std::shared_ptr<RHI_DepthStencilState>& depth_stencil_state) { SetDepthStencilState(depth_stencil_state.get()); }
-
-		// Rasterizer state
-		void SetRasterizerState(const RHI_RasterizerState* rasterizer_state);
-		void SetRasterizerState(const std::shared_ptr<RHI_RasterizerState>& rasterizer_state) { SetRasterizerState(rasterizer_state.get()); }
-
-		// Blend state
-		void SetBlendState(const RHI_BlendState* blend_state);
-		void SetBlendState(const std::shared_ptr<RHI_BlendState>& blend_state) { SetBlendState(blend_state.get()); }
-
-		// Vertex buffer
-		void SetBufferVertex(const RHI_VertexBuffer* buffer);
-		void SetBufferVertex(const std::shared_ptr<RHI_VertexBuffer>& buffer) { SetBufferVertex(buffer.get()); }
-
-		// Index buffer
-		void SetBufferIndex(const RHI_IndexBuffer* buffer);
-		void SetBufferIndex(const std::shared_ptr<RHI_IndexBuffer>& buffer) { SetBufferIndex(buffer.get()); }
-
-		// Vertex shader
-		void SetShaderVertex(const RHI_Shader* shader);
-		void SetShaderVertex(const std::shared_ptr<RHI_Shader>& shader) { SetShaderVertex(shader.get()); }
-
-		// Pixel shader
-		void SetShaderPixel(const RHI_Shader* shader);
-		void SetShaderPixel(const std::shared_ptr<RHI_Shader>& shader) { SetShaderPixel(shader.get()); }
-
-        // Compute shader
-        void SetShaderCompute(const RHI_Shader* shader);
-        void SetShaderCompute(const std::shared_ptr<RHI_Shader>& shader) { SetShaderCompute(shader.get()); }
-
-		// Constant buffer
-		void SetConstantBuffers(uint32_t start_slot, RHI_Buffer_Scope scope, const std::vector<void*>& constant_buffers);
-		void SetConstantBuffer(uint32_t slot, RHI_Buffer_Scope scope, const std::shared_ptr<RHI_ConstantBuffer>& constant_buffer);
-
-		// Sampler
-		void SetSamplers(uint32_t start_slot, const std::vector<void*>& samplers);
-		void SetSampler(uint32_t slot, const std::shared_ptr<RHI_Sampler>& sampler);
-
-		// Texture
-		void SetTextures(const uint32_t start_slot, const void* textures, uint32_t texture_count, bool is_array = true);
-		void SetTexture(const uint32_t slot, RHI_Texture* texture);
-		void SetTexture(const uint32_t slot, const std::shared_ptr<RHI_Texture>& texture)	{ SetTextures(slot, texture ? texture->GetResource_Texture() : nullptr, 1, false); }
-		void ClearTextures()																{ SetTextures(0, m_textures_empty.data(), static_cast<uint32_t>(m_textures_empty.size())); }
-
-		// Render targets
-		void SetRenderTargets(const std::vector<void*>& render_targets, void* depth_stencil = nullptr);
-		void SetRenderTarget(void* render_target, void* depth_stencil = nullptr);
-		void SetRenderTarget(const std::shared_ptr<RHI_Texture>&, void* depth_stencil = nullptr);
-		void ClearRenderTarget(void* render_target, const Math::Vector4& color);
-		void ClearRenderTargets(const std::vector<void*>& render_targets, const Math::Vector4& color)
-		{
-			for (const auto& render_target : render_targets)
-			{
-				ClearRenderTarget(render_target, color);
-			}
-		}
-		void ClearDepthStencil(void* depth_stencil, uint32_t flags, float depth, uint32_t stencil = 0);
-
-		bool Submit(bool profile = true);
-
-	private:
-		void Clear();
-
-		// Dependencies
-		Profiler* m_profiler = nullptr;
-		std::shared_ptr<RHI_Device> m_rhi_device;
-		std::vector<void*> m_textures_empty = std::vector<void*>(10);
-
-		// API
-		RHI_Command& GetCmd();
-		RHI_Command m_empty_cmd; // for GetCmd()
-		std::vector<RHI_Command> m_commands;
-		std::vector<void*> m_cmd_buffers;
-		std::vector<void*> m_semaphores_cmd_list_consumed;
-		std::vector<void*> m_fences_in_flight;
-		uint32_t m_initial_capacity = 6000;
-		uint32_t m_command_count	= 0;	
-		RHI_Pipeline* m_pipeline	= nullptr;
-		void* m_cmd_pool			= nullptr;
-		uint32_t m_buffer_index		= 0;
-		bool m_is_recording			= false;
-		bool m_sync_cpu_to_gpu		= false;
-	};
+        // Variables to minimise state changes
+        uint32_t m_vertex_buffer_id     = 0;
+        uint64_t m_vertex_buffer_offset = 0;
+        uint32_t m_index_buffer_id      = 0;
+        uint64_t m_index_buffer_offset  = 0;
+    };
 }

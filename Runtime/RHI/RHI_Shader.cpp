@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,14 +19,13 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-//= INCLUDES ========================
+//= INCLUDES ======================
+#include "Spartan.h"
 #include "RHI_Shader.h"
 #include "RHI_InputLayout.h"
-#include <spirv_hlsl.hpp>
-#include "../Core/Context.h"
 #include "../Threading/Threading.h"
-#include "../FileSystem/FileSystem.h"
-//===================================
+#include "../Rendering/Renderer.h"
+//=================================
 
 //= NAMESPACES =====
 using namespace std;
@@ -34,145 +33,163 @@ using namespace std;
 
 namespace Spartan
 {
-	RHI_Shader::RHI_Shader(const shared_ptr<RHI_Device>& rhi_device)
-	{
-		m_rhi_device	= rhi_device;
-		m_input_layout	= make_shared<RHI_InputLayout>(rhi_device);
-	}
+    RHI_Shader::RHI_Shader(Context* context) : Spartan_Object(context)
+    {
+        m_rhi_device    = context->GetSubsystem<Renderer>()->GetRhiDevice();
+        m_input_layout    = make_shared<RHI_InputLayout>(m_rhi_device);
+    }
 
-	template <typename T>
-	void RHI_Shader::Compile(const Shader_Type type, const string& shader)
-	{
+    template <typename T>
+    void RHI_Shader::Compile(const RHI_Shader_Type type, const string& shader)
+    {
         m_shader_type = type;
+        m_vertex_type = RHI_Vertex_Type_To_Enum<T>();
 
-		// Deduce name and file path
-		if (!FileSystem::IsDirectory(shader))
-		{
-			m_name = FileSystem::GetFileNameFromFilePath(shader);
-			m_file_path = shader;
-		}
-		else
-		{
-			m_name.clear();
-			m_file_path.clear();
-		}
+        // Can also be the source
+        const bool is_file = FileSystem::IsFile(shader);
 
-		// Compile
-		if (type == Shader_Vertex)
-		{
-			m_compilation_state = Shader_Compiling;
-			m_resource_vertex	= _Compile<T>(type, shader);
-			m_compilation_state = m_resource_vertex ? Shader_Compiled : Shader_Failed;
-		}
-		else if (type == Shader_Pixel)
-		{
-			m_compilation_state = Shader_Compiling;
-			m_resource_pixel    = _Compile(type, shader);
-			m_compilation_state = m_resource_pixel ? Shader_Compiled : Shader_Failed;
-		}
-        else if (type == Shader_Compute)
+        // Deduce name and file path
+        if (is_file)
         {
-            m_compilation_state = Shader_Compiling;
-            m_resource_compute  = _Compile(type, shader);
-            m_compilation_state = m_resource_compute ? Shader_Compiled : Shader_Failed;
+            m_name      = FileSystem::GetFileNameFromFilePath(shader);
+            m_file_path = shader;
         }
-		else if (type == Shader_VertexPixel)
-		{
-			m_compilation_state = Shader_Compiling;
-            m_shader_type       = Shader_Vertex; // temp switch
-			m_resource_vertex	= _Compile<T>(Shader_Vertex, shader);
-            m_shader_type       = Shader_Pixel; // temp switch
-			m_resource_pixel	= _Compile(Shader_Pixel, shader);
-            m_shader_type       = Shader_VertexPixel; // revert to original
-			m_compilation_state = (m_resource_vertex && m_resource_pixel) ? Shader_Compiled : Shader_Failed;
-		}
-
-		// Log compilation result
+        else
         {
-            string shader_type;
-            shader_type = type == Shader_Vertex         ? "vertex shader"           : shader_type;
-            shader_type = type == Shader_Pixel          ? "pixel shader"            : shader_type;
-            shader_type = type == Shader_Compute        ? "compute shader"          : shader_type;
-            shader_type = type == Shader_VertexPixel    ? "vertex and pixel shader" : shader_type;
+            m_name.clear();
+            m_file_path.clear();
+        }
 
-            if (m_compilation_state == Shader_Compiled)
+        // Compile
+        m_compilation_state = Shader_Compilation_Compiling;
+        m_resource          = _Compile(shader);
+        m_compilation_state = m_resource ? Shader_Compilation_Succeeded : Shader_Compilation_Failed;
+
+        // Log compilation result
+        {
+            string type_str = "unknown";
+            type_str        = type == RHI_Shader_Vertex     ? "vertex"   : type_str;
+            type_str        = type == RHI_Shader_Pixel      ? "pixel"    : type_str;
+            type_str        = type == RHI_Shader_Compute    ? "compute"  : type_str;
+
+            string defines;
+            for (const auto& define : m_defines)
             {
-                LOGF_INFO("Successfully compiled %s from \"%s\"", shader_type.c_str(), shader.c_str());
+                if (!defines.empty())
+                    defines += ", ";
+
+                defines += define.first + " = " + define.second;
             }
-            else if (m_compilation_state == Shader_Failed)
+
+            if (m_compilation_state == Shader_Compilation_Succeeded)
             {
-                LOGF_ERROR("Failed to compile %s from \"%s\"", shader_type.c_str(), shader.c_str());
+                if (defines.empty())
+                {
+                    LOG_INFO("Successfully compiled %s shader from \"%s\"", type_str.c_str(), shader.c_str());
+                }
+                else
+                {
+                    LOG_INFO("Successfully compiled %s shader from \"%s\" with definitions \"%s\"", type_str.c_str(), shader.c_str(), defines.c_str());
+                }
+            }
+            else if (m_compilation_state == Shader_Compilation_Failed)
+            {
+                if (defines.empty())
+                {
+                    LOG_ERROR("Failed to compile %s shader from \"%s\"", type_str.c_str(), shader.c_str());
+                }
+                else
+                {
+                    LOG_ERROR("Failed to compile %s shader from \"%s\" with definitions \"%s\"", type_str.c_str(), shader.c_str(), defines.c_str());
+                }
             }
         }
-	}
-
-	template <typename T>
-	void RHI_Shader::CompileAsync(Context* context, const Shader_Type type, const string& shader)
-	{
-		context->GetSubsystem<Threading>()->AddTask([this, type, shader]()
-		{
-			Compile<T>(type, shader);
-		});
-	}
-
-    string RHI_Shader::GetEntryPoint() const
-    {
-        if (m_shader_type == Shader_Vertex)     return "mainVS";
-        if (m_shader_type == Shader_Pixel)      return "mainPS";
-        if (m_shader_type == Shader_Compute)    return "mainCS";
-
-        return "";
     }
 
-    string RHI_Shader::GetTargetProfile() const
+    template <typename T>
+    void RHI_Shader::CompileAsync(const RHI_Shader_Type type, const string& shader)
     {
-        if (m_shader_type == Shader_Vertex)     return "vs_" + GetShaderModel();
-        if (m_shader_type == Shader_Pixel)      return "ps_" + GetShaderModel();
-        if (m_shader_type == Shader_Compute)    return "cs_" + GetShaderModel();
-
-        return "";
+        m_context->GetSubsystem<Threading>()->AddTask([this, type, shader]()
+        {
+            Compile<T>(type, shader);
+        });
     }
 
-    const std::string& RHI_Shader::GetShaderModel() const
+    void RHI_Shader::WaitForCompilation()
+    {
+        // Wait
+        while (m_compilation_state == Shader_Compilation_Compiling)
+        {
+            LOG_INFO("Waiting for shader \"%s\" to compile...", m_name.c_str());
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+        
+        // Log error in case of failure
+        if (m_compilation_state != Shader_Compilation_Succeeded)
+        {
+            LOG_ERROR("Shader \"%s\" failed compile", m_name.c_str());
+        }
+    }
+
+    const char* RHI_Shader::GetEntryPoint() const
+    {
+        static const char* entry_point_empty = nullptr;
+
+        static const char* entry_point_vs = "mainVS";
+        static const char* entry_point_ps = "mainPS";
+        static const char* entry_point_cs = "mainCS";
+
+        if (m_shader_type == RHI_Shader_Vertex)     return entry_point_vs;
+        if (m_shader_type == RHI_Shader_Pixel)      return entry_point_ps;
+        if (m_shader_type == RHI_Shader_Compute)    return entry_point_cs;
+
+        return entry_point_empty;
+    }
+
+    const char* RHI_Shader::GetTargetProfile() const
+    {
+        static const char* target_profile_empty = nullptr;
+
+        #if defined(API_GRAPHICS_D3D11)
+        static const char* target_profile_vs = "vs_5_0";
+        static const char* target_profile_ps = "ps_5_0";
+        static const char* target_profile_cs = "cs_5_0";
+        #elif defined(API_GRAPHICS_D3D12)
+        static const char* target_profile_vs = "vs_6_6";
+        static const char* target_profile_ps = "ps_6_6";
+        static const char* target_profile_cs = "cs_6_6";
+        #elif defined(API_GRAPHICS_VULKAN)
+        static const char* target_profile_vs = "vs_6_6";
+        static const char* target_profile_ps = "ps_6_6";
+        static const char* target_profile_cs = "cs_6_6";
+        #endif
+
+        if (m_shader_type == RHI_Shader_Vertex)     return target_profile_vs;
+        if (m_shader_type == RHI_Shader_Pixel)      return target_profile_ps;
+        if (m_shader_type == RHI_Shader_Compute)    return target_profile_cs;
+
+        return target_profile_empty;
+    }
+
+    const char* RHI_Shader::GetShaderModel() const
     {
         #if defined(API_GRAPHICS_D3D11)
-        static const std::string shader_model = "5_0";
+        static const char* shader_model = "5_0";
+        #elif defined(API_GRAPHICS_D3D12)
+        static const char* shader_model = "6_0";
         #elif defined(API_GRAPHICS_VULKAN)
-        static const std::string shader_model = "6_0";
+        static const char* shader_model = "6_0";
         #endif
 
         return shader_model;
     }
 
-    void RHI_Shader::_Reflect(const Shader_Type type, const uint32_t* ptr, const uint32_t size)
-	{
-		using namespace spirv_cross;
-
-		// Initialize compiler with SPIR-V data
-		const auto compiler = CompilerHLSL(ptr, size);
-
-		// The SPIR-V is now parsed, and we can perform reflection on it
-		auto resources = compiler.get_shader_resources();
-
-		// Get samplers
-		for (const auto& sampler : resources.separate_samplers)
-		{
-			auto slot = compiler.get_decoration(sampler.id, spv::DecorationBinding);
-			m_resources.emplace_back(sampler.name, Descriptor_Sampler, slot, type);
-		}
-
-		// Get textures
-		for (const auto& image : resources.separate_images)
-		{
-			auto slot = compiler.get_decoration(image.id, spv::DecorationBinding);
-			m_resources.emplace_back(image.name, Descriptor_Texture, slot, type);
-		}
-
-		// Get constant buffers
-		for (const auto& buffer : resources.uniform_buffers)
-		{
-			auto slot = compiler.get_decoration(buffer.id, spv::DecorationBinding);
-			m_resources.emplace_back(buffer.name, Descriptor_ConstantBuffer, slot, type);
-		}
-	}
+    //= Explicit template instantiation =======================================================================
+    template void RHI_Shader::CompileAsync<RHI_Vertex_Undefined>(const RHI_Shader_Type, const std::string&);
+    template void RHI_Shader::CompileAsync<RHI_Vertex_Pos>(const RHI_Shader_Type, const std::string&);
+    template void RHI_Shader::CompileAsync<RHI_Vertex_PosTex>(const RHI_Shader_Type, const std::string&);
+    template void RHI_Shader::CompileAsync<RHI_Vertex_PosCol>(const RHI_Shader_Type, const std::string&);
+    template void RHI_Shader::CompileAsync<RHI_Vertex_Pos2dTexCol8>(const RHI_Shader_Type, const std::string&);
+    template void RHI_Shader::CompileAsync<RHI_Vertex_PosTexNorTan>(const RHI_Shader_Type, const std::string&);
+    //=========================================================================================================
 }

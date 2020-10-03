@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -31,12 +31,12 @@ class FileDialog;
 class Widget_Assets : public Widget
 {
 public:
-	Widget_Assets(Spartan::Context* context);
-	void Tick() override;
+    Widget_Assets(Editor* editor);
+    void Tick() override;
 
 private:
-	void OnPathClicked(const std::string& path);
+    void OnPathClicked(const std::string& path) const;
 
-	std::unique_ptr<FileDialog> m_fileDialogView;
-	std::unique_ptr<FileDialog> m_fileDialogLoad;
+    std::unique_ptr<FileDialog> m_fileDialogView;
+    std::unique_ptr<FileDialog> m_fileDialogLoad;
 };

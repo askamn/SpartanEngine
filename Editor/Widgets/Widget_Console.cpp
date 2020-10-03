@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,11 +19,13 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-//= INCLUDES ==================
+//= INCLUDES ==============================
 #include "Widget_Console.h"
-#include "../IconProvider.h"
+#include "Rendering/Model.h"
 #include "../ImGui_Extension.h"
-//=============================
+#include "../ImGui/Source/imgui_stdlib.h"
+#include "../ImGui/Source/imgui_internal.h"
+//=========================================
 
 //= NAMESPACES =========
 using namespace std;
@@ -31,110 +33,178 @@ using namespace Spartan;
 using namespace Math;
 //======================
 
-namespace _Widget_Console
+Widget_Console::Widget_Console(Editor* editor) : Widget(editor)
 {
-	static bool scroll_to_bottom = false;
-	static const vector<Vector4> colors =
-	{
-		Vector4(0.76f, 0.77f, 0.8f, 1.0f),	// Info
-		Vector4(0.75f, 0.75f, 0.0f, 1.0f),	// Warning
-		Vector4(0.75f, 0.0f, 0.0f, 1.0f)	// Error
-	};
-	static ImGuiTextFilter log_filter;
-}
+    m_title = "Console";
 
-Widget_Console::Widget_Console(Context* context) : Widget(context)
-{
-	m_title = "Console";
+    // Create an implementation of EngineLogger
+    m_logger = make_shared<EngineLogger>();
+    m_logger->SetCallback([this](const LogPackage& package) { AddLogPackage(package); });
 
-	// Create an implementation of EngineLogger
-	m_logger = make_shared<EngineLogger>();
-	m_logger->SetCallback([this](const LogPackage package) { AddLogPackage(package); });
-
-	// Set the logger implementation for the engine to use
-	Log::SetLogger(m_logger);
+    // Set the logger implementation for the engine to use
+    Log::SetLogger(m_logger);
 }
 
 void Widget_Console::Tick()
 {
-	// Clear Button
-	if (ImGui::Button("Clear"))	{ Clear();} ImGui::SameLine();
+    // Clear Button
+    if (ImGui::Button("Clear"))    { Clear();} ImGui::SameLine();
 
-	// Lambda for info, warning, error filter buttons
-	const auto display_button = [this](const Icon_Type icon, uint32_t index)
-	{
-        bool& visibility = m_visibility[index];
-
-		ImGui::PushStyleColor(ImGuiCol_Button, visibility ? ImGui::GetStyle().Colors[ImGuiCol_ButtonActive] : ImGui::GetStyle().Colors[ImGuiCol_Button]);
-		if (ImGuiEx::ImageButton(icon, 15.0f))
-		{
+    // Lambda for info, warning, error filter buttons
+    const auto button_log_type_visibility_toggle = [this](const Icon_Type icon, uint32_t index)
+    {
+        bool& visibility = m_log_type_visibility[index];
+        ImGui::PushStyleColor(ImGuiCol_Button, visibility ? ImGui::GetStyle().Colors[ImGuiCol_Button] : ImGui::GetStyle().Colors[ImGuiCol_FrameBg]);
+        if (ImGuiEx::ImageButton(icon, 15.0f))
+        {
             visibility = !visibility;
-			_Widget_Console::scroll_to_bottom = true;
-		}
-		ImGui::PopStyleColor();
-		ImGui::SameLine();
-        ImGui::Text("%d", m_count[index]);
+            m_scroll_to_bottom = true;
+        }
+        ImGui::PopStyleColor();
         ImGui::SameLine();
-	};
+        ImGui::Text("%d", m_log_type_count[index]);
+        ImGui::SameLine();
+    };
 
-	// Log category visibility buttons
-	display_button(Icon_Console_Info,       0);
-	display_button(Icon_Console_Warning,    1);
-	display_button(Icon_Console_Error,      2);
+    // Log category visibility buttons
+    button_log_type_visibility_toggle(Icon_Console_Info,       0);
+    button_log_type_visibility_toggle(Icon_Console_Warning,    1);
+    button_log_type_visibility_toggle(Icon_Console_Error,      2);
 
-	// Text filter
-	_Widget_Console::log_filter.Draw("Filter", -100.0f);
-	ImGui::Separator();
+    // Text filter
+    const float label_width = 37.0f; //ImGui::CalcTextSize("Filter", nullptr, true).x;
+    m_log_filter.Draw("Filter", ImGui::GetContentRegionAvail().x - label_width);
+    ImGui::Separator();
 
-	// Content
-	ImGui::BeginChild("scrolling", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
-	for (auto& log : m_logs)
-	{
-		if (!_Widget_Console::log_filter.PassFilter(log.text.c_str()))
-			continue;
+    // Content
+    if (ImGui::BeginChild("scrolling", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar))
+    {
+        ImVec4 color_odd    = ImGui::GetStyle().Colors[ImGuiCol_FrameBg];
+        ImVec4 color_even   = color_odd; color_even.w = 0;
 
-		if (m_visibility[log.error_level])
-		{
-			ImGui::PushStyleColor(ImGuiCol_Text, _Widget_Console::colors[log.error_level]);	// text
-			ImGui::TextUnformatted(log.text.c_str());
-			ImGui::PopStyleColor();
-		}
-	}
+        // Set max log width
+        float max_log_width = 0;
+        max_log_width = m_log_type_visibility[0] ? Math::Helper::Max(max_log_width, m_log_type_max_width[0]) : max_log_width;
+        max_log_width = m_log_type_visibility[1] ? Math::Helper::Max(max_log_width, m_log_type_max_width[1]) : max_log_width;
+        max_log_width = m_log_type_visibility[2] ? Math::Helper::Max(max_log_width, m_log_type_max_width[2]) : max_log_width;
+        max_log_width = Math::Helper::Max(max_log_width, ImGui::GetWindowContentRegionWidth());
+        ImGui::PushItemWidth(max_log_width);
 
-	if (_Widget_Console::scroll_to_bottom)
-	{
-		ImGui::SetScrollHereY();
-		_Widget_Console::scroll_to_bottom = false;
-	}
+        // Wait for reading to finish
+        while (m_is_reading)
+        {
+            this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
 
-	ImGui::EndChild();
+        uint32_t index = 0;
+        m_is_reading = true;
+        for (LogPackage& log : m_logs)
+        {
+            if (m_log_filter.PassFilter(log.text.c_str()))
+            {
+                if (m_log_type_visibility[log.error_level])
+                {
+                    // Log entry
+                    ImGui::BeginGroup();
+                    {
+                        ImGui::PushStyleColor(ImGuiCol_Text, m_log_type_color[log.error_level]);            // text color
+                        ImGui::PushStyleColor(ImGuiCol_FrameBg, index % 2 != 0 ? color_odd : color_even);   // background color
+                        ImGui::InputText("##log", &log.text, ImGuiInputTextFlags_ReadOnly);
+                        ImGui::PopStyleColor(2);
+
+                        ImGui::EndGroup();
+
+                        // Trigger context menu
+                        if (ImGui::IsMouseClicked(1) && ImGui::IsItemHovered(ImGuiHoveredFlags_RectOnly))
+                        {
+                            m_log_selected = log;
+                            ImGui::OpenPopup("##ConsoleContextMenu");
+                        }
+                    }
+
+                    index++;
+                }
+            }
+        }
+        m_is_reading = false;
+
+        ImGui::PopItemWidth();
+
+        // Context menu (if requested)
+        if (ImGui::BeginPopup("##ConsoleContextMenu"))
+        {
+            if (ImGui::MenuItem("Copy"))
+            {
+                ImGui::LogToClipboard();
+                ImGui::LogText("%s", m_log_selected.text.c_str());
+                ImGui::LogFinish();
+            }
+
+            ImGui::Separator();
+
+            if (ImGui::MenuItem("Search"))
+            {
+                FileSystem::OpenDirectoryWindow("https://www.google.com/search?q=" + m_log_selected.text);
+            }
+
+            ImGui::EndPopup();
+        }
+
+        // Scroll to bottom (if requested)
+        if (m_scroll_to_bottom)
+        {
+            ImGui::SetScrollHereY();
+            m_scroll_to_bottom = false;
+        }
+
+        ImGui::EndChild();
+    }
 }
 
 void Widget_Console::AddLogPackage(const LogPackage& package)
 {
+    // Wait for reading to finish
+    while (m_is_reading) {}
+
     // Save to deque
-	m_logs.push_back(package);
-	if (static_cast<uint32_t>(m_logs.size()) > m_max_log_entries)
-	{
-		m_logs.pop_front();
-	}
+    m_logs.push_back(package);
+    if (static_cast<uint32_t>(m_logs.size()) > m_log_max_count)
+    {
+        m_logs.pop_front();
+    }
 
     // Update count
-    m_count[package.error_level]++;
+    m_log_type_count[package.error_level]++;
+
+    // Compute max width
+    float& width = m_log_type_max_width[package.error_level];
+    if (ImGui::GetCurrentContext()->Font)
+    {
+        width = Math::Helper::Max(width, ImGui::CalcTextSize(package.text.c_str()).x + 10);
+    }
+    else
+    {
+        // During startup, the font can be null, so compute a poor man's width
+        width = Math::Helper::Max(width, package.text.size() * 23.0f);
+    }
 
     // If the user is displaying this type of messages, scroll to bottom
-    if (m_visibility[package.error_level])
+    if (m_log_type_visibility[package.error_level])
     {
-        _Widget_Console::scroll_to_bottom = true;
+        m_scroll_to_bottom = true;
     }
 }
 
 void Widget_Console::Clear()
 {
-	m_logs.clear();
-	m_logs.shrink_to_fit();
+    m_logs.clear();
+    m_logs.shrink_to_fit();
 
-    m_count[0] = 0;
-    m_count[1] = 0;
-    m_count[2] = 0;
+    m_log_type_max_width[0] = 0;
+    m_log_type_max_width[1] = 0;
+    m_log_type_max_width[2] = 0;
+
+    m_log_type_count[0] = 0;
+    m_log_type_count[1] = 0;
+    m_log_type_count[2] = 0;
 }

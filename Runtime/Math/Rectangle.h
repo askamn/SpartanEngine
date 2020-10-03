@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -28,70 +28,92 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 namespace Spartan
 {
-	class Renderer;
+    class Renderer;
 
-	namespace Math
-	{
-		class Rectangle
-		{
-		public:
-			Rectangle()
-			{
-				x		= 0;
-				y		= 0;
-				width	= 0;
-				height	= 0;
-			}
+    namespace Math
+    {
+        class Rectangle
+        {
+        public:
+            Rectangle()
+            {
+                left    = std::numeric_limits<float>::max();
+                top     = std::numeric_limits<float>::max();
+                right   = std::numeric_limits<float>::lowest();
+                bottom  = std::numeric_limits<float>::lowest();
+            }
 
-			Rectangle(const float x, const float y, const float width, const float height)
-			{
-				this->x			= x;
-				this->y			= y;
-				this->width		= width;
-				this->height	= height;
-			}
+            Rectangle(const float left, const float top, const float right, const float bottom)
+            {
+                this->left      = left;
+                this->top       = top;
+                this->right     = right;
+                this->bottom    = bottom;
+            }
 
-			Rectangle(const Rectangle& rectangle)
-			{
-				x		= rectangle.x;
-				y		= rectangle.y;
-				width	= rectangle.width;
-				height	= rectangle.height;
-			}
+            Rectangle(const Rectangle& rectangle)
+            {
+                left    = rectangle.left;
+                top     = rectangle.top;
+                right   = rectangle.right;
+                bottom  = rectangle.bottom;
+            }
 
-			~Rectangle() = default;
+            ~Rectangle() = default;
 
-			bool operator==(const Rectangle& rhs) const
-			{
-				return
-					x		== rhs.x &&
-					y		== rhs.y &&
-					width	== rhs.width &&
-					height	== rhs.height;
-			}
+            bool operator==(const Rectangle& rhs) const
+            {
+                return
+                    left    == rhs.left     &&
+                    top     == rhs.top      &&
+                    right   == rhs.right    &&
+                    bottom  == rhs.bottom;
+            }
 
-			bool operator!=(const Rectangle& rhs) const
-			{
-				return
-					x		!= rhs.x ||
-					y		!= rhs.y ||
-					width	!= rhs.width ||
-					height	!= rhs.height;
-			}
+            bool operator!=(const Rectangle& rhs) const
+            {
+                return
+                    left    != rhs.left     ||
+                    top     != rhs.top      ||
+                    right   != rhs.right    ||
+                    bottom  != rhs.bottom;
+            }
 
-			bool CreateBuffers(Renderer* renderer);
-			static int GetIndexCount()			{ return 6; }
-			const auto&	GetIndexBuffer() const	{ return m_indexBuffer; }
-			const auto& GetVertexBuffer() const	{ return m_vertexBuffer; }
+            bool IsDefined() const
+            {
+                return  left    != 0.0f ||
+                        top     != 0.0f ||
+                        right   != 0.0f ||
+                        bottom  != 0.0f;
+            }
 
-			float x;
-			float y;
-			float width;
-			float height;
+            float Width() const { return right - left; }
+            float Height() const { return bottom - top; }
 
-		private:
-			std::shared_ptr<RHI_VertexBuffer> m_vertexBuffer;
-			std::shared_ptr<RHI_IndexBuffer> m_indexBuffer;
-		};
-	}
+            // Merge a point.
+            void Merge(const Vector2& point)
+            {
+                left    = Math::Helper::Min(left,     point.x);
+                top     = Math::Helper::Min(top,      point.y);
+                right   = Math::Helper::Max(right,    point.x);
+                bottom  = Math::Helper::Max(bottom,   point.y);
+            }
+
+            bool CreateBuffers(Renderer* renderer);
+            static int GetIndexCount() { return 6; }
+            RHI_IndexBuffer* GetIndexBuffer()   const { return m_indexBuffer.get(); }
+            RHI_VertexBuffer* GetVertexBuffer() const { return m_vertexBuffer.get(); }
+
+            float left;
+            float top;
+            float right;
+            float bottom;
+
+            static const Rectangle Zero;
+
+        private:
+            std::shared_ptr<RHI_VertexBuffer> m_vertexBuffer;
+            std::shared_ptr<RHI_IndexBuffer> m_indexBuffer;
+        };
+    }
 }

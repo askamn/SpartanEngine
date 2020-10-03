@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -19,95 +19,97 @@ IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
-//= INCLUDES ============
+//= INCLUDES =========
 #include "Common.hlsl"
-#include "Dithering.hlsl"
-//=======================
+//====================
 
-//= TEXTURES ==========================
-Texture2D tex_normal 	: register(t0);
-Texture2D tex_depth  	: register(t1);
-Texture2D tex_material  : register(t2);
-Texture2D tex_frame  	: register(t3);
-//=====================================
+static const uint g_ssr_max_steps               = 12;
+static const uint g_ssr_binarySearchSteps       = 12;
+static const float g_ssr_binarySearchThickness  = 0.001f;
+static const float g_ssr_ray_max_distance       = 10.0f;
 
-//= SAMPLERS ======================================
-SamplerState sampler_point_clamp 	: register(s0);
-SamplerState sampler_linear_clamp 	: register(s1);
-//=================================================
-
-
-static const int g_steps 					= 8;
-static const int g_binarySearchSteps 		= 8;
-static const float g_binarySearchThreshold 	= 0.01f;
-
-bool binary_search(float3 ray_dir, inout float3 ray_pos, inout float2 ray_uv)
+inline float2 binary_search(float3 ray_dir, inout float3 ray_pos, inout float2 ray_uv)
 {
-	for (int i = 0; i < g_binarySearchSteps; i++)
-	{	
-		ray_uv 				= project(ray_pos, g_projection);
-		float depth 		= get_linear_depth(tex_depth, sampler_linear_clamp, ray_uv);
-		float depth_delta 	= ray_pos.z - depth;
+    float depth_buffer_z = 0.0f;
+    float depth_delta = 1.0f;
+    float2 hit_uv = 0.0f;
 
-		if (depth_delta <= 0.0f)
-			ray_pos += ray_dir;
+    [unroll]
+    for (uint i = 0; i < g_ssr_binarySearchSteps; i++)
+    {
+        ray_dir *= 0.5f;
+        ray_pos += -sign(depth_delta) * ray_dir;
+        ray_uv = project_uv(ray_pos, g_projection);
 
-		ray_dir *= 0.5f;
-		ray_pos -= ray_dir;
-	}
+        depth_buffer_z = get_linear_depth(ray_uv);
+        depth_delta = ray_pos.z - depth_buffer_z;
+        
+        if (abs(g_ssr_binarySearchThickness - depth_delta) < g_ssr_binarySearchThickness)
+        {
+            hit_uv = ray_uv;
+            break;
+        }
+    }
 
-	ray_uv 				= project(ray_pos, g_projection);
-	float depth_sample 	= get_linear_depth(tex_depth, sampler_linear_clamp, ray_uv);
-	float depth_delta 	= ray_pos.z - depth_sample;
-
-	return abs(depth_delta) < g_binarySearchThreshold;
+    return hit_uv;
 }
 
-bool ray_march(float3 ray_pos, float3 ray_dir, inout float2 ray_uv)
+inline float2 trace_ray(float2 uv, float3 ray_pos, float3 ray_dir)
 {
-	for(int i = 0; i < g_steps; i++)
-	{
-		// Step ray
-		ray_pos += ray_dir;
-		ray_uv 	= project(ray_pos, g_projection);
+    float step_length   = g_ssr_ray_max_distance / (float) g_ssr_max_steps;
+    float3 ray_step     = ray_dir * step_length;
+    float2 ray_uv_hit   = 0.0f;
+    
+    // Reject if the reflection vector is pointing back at the viewer.
+    // Attenuate reflections for angles between 60 degrees and 75 degrees, and drop all contribution beyond the (-60,60) degree range
+    float3 camera_direction = normalize(mul(float4(g_camera_direction, 0.0f), g_view).xyz);
+    float fade_camera = 1 - smoothstep(0.25, 0.5, dot(-camera_direction, ray_dir));
+    [branch]
+    if (fade_camera > 0)
+    {
+        // Offseting with some temporal interleaved gradient noise, will capture more detail
+        float offset = interleaved_gradient_noise(g_resolution * uv) * 2.0f - 1.0f;
+        ray_pos += ray_step * offset;
 
-		// Compare depth
-		float depth_sampled = get_linear_depth(tex_depth, sampler_linear_clamp, ray_uv);
-		float depth_delta 	= ray_pos.z - depth_sampled;
-		
-		[branch]
-		if (depth_delta > 0.0f)
-			return binary_search(ray_dir, ray_pos, ray_uv);
-	}
+        // Ray-march
+        float2 ray_uv = 0.0f;
+        for (uint i = 0; i < g_ssr_max_steps; i++)
+        {
+            // Step ray
+            ray_pos += ray_step;
+            ray_uv = project_uv(ray_pos, g_projection);
 
-	return false;
+            float depth_buffer_z = get_linear_depth(ray_uv);
+
+            [branch]
+            if (ray_pos.z > depth_buffer_z)
+            {
+                ray_uv_hit = binary_search(ray_dir, ray_pos, ray_uv);
+                break;
+            }
+        }
+
+        // Reject if the reflection is pointing outside of the viewport
+        ray_uv_hit *= is_saturated(ray_uv_hit);
+    }
+
+    return ray_uv_hit;
 }
 
-float4 mainPS(Pixel_PosUv input) : SV_TARGET
+[numthreads(thread_group_count_x, thread_group_count_y, 1)]
+void mainCS(uint3 thread_id : SV_DispatchThreadID)
 {
-	// Sample textures and compute world position
-    float2 uv				= input.uv;
-	float3 normal 			= normal_decode(tex_normal.Sample(sampler_point_clamp, uv).xyz);	
-	float roughness 		= tex_material.Sample(sampler_point_clamp, uv).r;
-	float depth  			= tex_depth.Sample(sampler_point_clamp, uv).r;
-    float3 position_world 	= get_world_position_from_depth(depth, g_viewProjectionInv, uv);
+    if (thread_id.x >= uint(g_resolution.x) || thread_id.y >= uint(g_resolution.y))
+        return;
 
-	// Convert everything to view space
-	float3 view_pos			= mul(float4(position_world, 1.0f), g_view).xyz;
-	float3 view_normal		= normalize(mul(float4(normal, 0.0f), g_view).xyz);
-	float3 view_reflection 	= normalize(reflect(view_pos, view_normal));
+    const float2 uv = (thread_id.xy + 0.5f) / g_resolution;
 
-	// Apply dithering as it will allows us to get away with more detail
-	float3 dither_value = Dither(uv + g_taa_jitterOffset) * 200;
-	view_pos += view_reflection * dither_value;
-	
-	float2 ray_hit_uv = 0.0f;
-	if (ray_march(view_pos, view_reflection, ray_hit_uv))
-	{
-		float2 edgeFactor = float2(1, 1) - pow(saturate(abs(ray_hit_uv - float2(0.5f, 0.5f)) * 2), 8);
-		float fade_screen = saturate(min(edgeFactor.x, edgeFactor.y));
-		return tex_frame.Sample(sampler_linear_clamp, ray_hit_uv) * fade_screen;
-	}
-	
-	return 0.0f;
+    // Compute view-space ray
+    float3 normal_view  = get_normal_view_space(thread_id.xy);
+    float3 ray_pos      = get_position_view_space(thread_id.xy);
+    float3 ray_dir      = normalize(reflect(ray_pos, normal_view));
+
+    // Trace it
+    tex_out_rg[thread_id.xy] = trace_ray(uv, ray_pos, ray_dir);
 }
+

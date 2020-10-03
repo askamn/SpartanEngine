@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -24,13 +24,13 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 enum TransformHandle_Type
 {
-	TransformHandle_Position,
-	TransformHandle_Rotation,
-	TransformHandle_Scale
+    TransformHandle_Position,
+    TransformHandle_Rotation,
+    TransformHandle_Scale
 };
 
 enum TransformHandle_Space
 {
-	TransformHandle_Local,
-	TransformHandle_World
+    TransformHandle_Local,
+    TransformHandle_World
 };

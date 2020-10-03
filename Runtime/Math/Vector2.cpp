@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -20,7 +20,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
 //= INCLUDES =======
-#include "Vector2.h"
+#include "Spartan.h"
 //==================
 
 //= NAMESPACES =====
@@ -29,13 +29,13 @@ using namespace std;
 
 namespace Spartan::Math
 {
-	const Vector2 Vector2::Zero(0.0f, 0.0f);
-	const Vector2 Vector2::One(1.0f, 1.0f);
+    const Vector2 Vector2::Zero(0.0f, 0.0f);
+    const Vector2 Vector2::One(1.0f, 1.0f);
 
-	string Vector2::ToString() const
-	{
-		char tempBuffer[200];
-		sprintf_s(tempBuffer, "X:%f, Y:%f", x, y);
-		return string(tempBuffer);
-	}
+    string Vector2::ToString() const
+    {
+        char tempBuffer[200];
+        sprintf_s(tempBuffer, "X:%f, Y:%f", x, y);
+        return string(tempBuffer);
+    }
 }

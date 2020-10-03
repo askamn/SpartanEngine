@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -29,25 +29,23 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 #include "../../Math/Vector3.h"
 #include "../../Math/Matrix.h"
 #include "../../RHI/RHI_Definition.h"
-#include "../../Math/Vector2.h"
 #include "../../Math/Frustum.h"
 //===================================
 
 namespace Spartan
 {
-	class Camera;
-	class Renderable;
-	class Renderer;
+    class Camera;
+    class Renderable;
+    class Renderer;
 
-	enum LightType
-	{
-		LightType_Directional,
-		LightType_Point,
-		LightType_Spot
-	};
+    enum class LightType
+    {
+        Directional,
+        Point,
+        Spot
+    };
 
-    static const int g_cascade_count = 4;
-    struct Cascade
+    struct ShadowSlice
     {
         Math::Vector3 min       = Math::Vector3::Zero;
         Math::Vector3 max       = Math::Vector3::Zero;
@@ -55,102 +53,107 @@ namespace Spartan
         Math::Frustum frustum;
     };
 
-	class SPARTAN_CLASS Light : public IComponent
-	{
-	public:
-		Light(Context* context, Entity* entity, uint32_t id = 0);
+    struct ShadowMap
+    {
+        std::shared_ptr<RHI_Texture> texture_color;
+        std::shared_ptr<RHI_Texture> texture_depth;
+        std::vector<ShadowSlice> slices;
+    };
+
+    class SPARTAN_CLASS Light : public IComponent
+    {
+    public:
+        Light(Context* context, Entity* entity, uint32_t id = 0);
         ~Light() = default;
 
-		//= COMPONENT ================================
-		void OnInitialize() override;
-		void OnStart() override;
-		void OnTick(float delta_time) override;
-		void Serialize(FileStream* stream) override;
-		void Deserialize(FileStream* stream) override;
-		//============================================
+        //= COMPONENT ================================
+        void OnInitialize() override;
+        void OnStart() override;
+        void OnTick(float delta_time) override;
+        void Serialize(FileStream* stream) override;
+        void Deserialize(FileStream* stream) override;
+        //============================================
 
-		auto GetLightType() { return m_lightType; }
-		void SetLightType(LightType type);
+        const auto GetLightType() const { return m_light_type; }
+        void SetLightType(LightType type);
 
-		void SetColor(float r, float g, float b, float a)	{ m_color = Math::Vector4(r, g, b, a); }
-		void SetColor(const Math::Vector4& color)			{ m_color = color; }
-		const auto& GetColor()								{ return m_color; }
+        void SetColor(const float temperature);
+        void SetColor(const Math::Vector4& rgb) { m_color_rgb = rgb; }
+        const auto& GetColor() const            { return m_color_rgb; }
 
-		void SetIntensity(float value)	{ m_intensity = value; }
-		auto GetIntensity()				{ return m_intensity; }
+        void SetIntensity(float value)    { m_intensity = value; }
+        auto GetIntensity()    const        { return m_intensity; }
 
-		bool GetCastShadows() { return m_cast_shadows; }
-		void SetCastShadows(bool castShadows);
+        bool GetShadowsEnabled() const { return m_shadows_enabled; }
+        void SetShadowsEnabled(bool cast_shadows);
 
-		void SetRange(float range);
-		auto GetRange() { return m_range; }
+        bool GetShadowsScreenSpaceEnabled() const                      { return m_shadows_screen_space_enabled; }
+        void SetShadowsScreenSpaceEnabled(bool cast_contact_shadows)   { m_shadows_screen_space_enabled = cast_contact_shadows; }
 
-		void SetAngle(float angle);
-		auto GetAngle() { return m_angle_rad; }
+        bool GetShadowsTransparentEnabled() const { return m_shadows_transparent_enabled; }
+        void SetShadowsTransparentEnabled(bool cast_transparent_shadows);
 
-		void SetBias(float value)	{ m_bias = value; }
-		float GetBias()				{ return m_bias; }
+        bool GetVolumetricEnabled() const               { return m_volumetric_enabled; }
+        void SetVolumetricEnabled(bool is_volumetric)   { m_volumetric_enabled = is_volumetric; }
 
-		void SetNormalBias(float value) { m_normal_bias = value; }
-		auto GetNormalBias()			{ return m_normal_bias; }
+        void SetRange(float range);
+        auto GetRange() const { return m_range; }
 
-		Math::Vector3 GetDirection();
-		void ClampRotation();
+        void SetAngle(float angle);
+        auto GetAngle() const { return m_angle_rad; }
 
-		const Math::Matrix& GetViewMatrix(uint32_t index = 0);
-		const Math::Matrix& GetProjectionMatrix(uint32_t index = 0);
+        void SetTimeOfDay(float time_of_day);
+        auto GetTimeOfDay() const { return m_time_of_day; }
 
-		const auto& GetShadowMap() { return m_shadow_map; }
-        void CreateShadowMap(bool force);
+        void SetBias(float value)   { m_bias = value; }
+        float GetBias() const       { return m_bias; }
 
-        bool IsInViewFrustrum(Renderable* renderable, uint32_t index);
+        void SetNormalBias(float value) { m_normal_bias = value; }
+        auto GetNormalBias() const { return m_normal_bias; }
 
-        // Constant buffer
-        void UpdateConstantBuffer(bool volumetric_lighting, bool screen_space_contact_shadows);
-        const auto& GetConstantBuffer() const { return m_cb_light_gpu; }
+        Math::Vector3 GetDirection() const;
 
-	private:
-		void ComputeViewMatrix();
-		bool ComputeProjectionMatrix(uint32_t index = 0);
+        const Math::Matrix& GetViewMatrix(uint32_t index = 0) const;
+        const Math::Matrix& GetProjectionMatrix(uint32_t index = 0) const;
+
+        RHI_Texture* GetDepthTexture() const { return m_shadow_map.texture_depth.get(); }
+        RHI_Texture* GetColorTexture() const { return m_shadow_map.texture_color.get(); }
+        uint32_t GetShadowArraySize() const;
+        void CreateShadowMap();
+
+        bool IsInViewFrustrum(Renderable* renderable, uint32_t index) const;
+
+    private:
+        void ComputeViewMatrix();
+        bool ComputeProjectionMatrix(uint32_t index = 0);
         void ComputeCascadeSplits();
-		
-		LightType m_lightType	= LightType_Directional;
-		bool m_cast_shadows		= true;
-		float m_range			= 10.0f;
-		float m_intensity		= 2.0f;
-		float m_angle_rad		= 0.5f; // about 30 degrees
-		float m_bias			= 0.001f;
-		float m_normal_bias		= 40.0f;	
-		bool m_is_dirty			= true;
-		Math::Vector4 m_color   = Math::Vector4(1.0f, 0.76f, 0.57f, 1.0f);
-		std::array<Math::Matrix, 6> m_matrix_view;
-		std::array<Math::Matrix, 6> m_matrix_projection;
-		Math::Quaternion m_lastRotLight;
-		Math::Vector3 m_lastPosLight;
-		Math::Matrix m_camera_last_view;
-        std::vector<Cascade> m_cascades;
-		
-		// Shadow map
-		std::shared_ptr<RHI_Texture> m_shadow_map;	
-		Renderer* m_renderer;
 
-        // Constant buffer
-        struct CB_Light
-        {
-            Math::Matrix view_projection[g_cascade_count];
-            Math::Vector3 color;
-            float intensity;
-            Math::Vector3 position;
-            float range;
-            Math::Vector3 direction;
-            float angle;
-            float bias;
-            float normal_bias;
-            float shadow_enabled;
-            float volumetric_lighting;
-            float screen_space_contact_shadows;
-            Math::Vector3 padding = Math::Vector3::Zero;
-        };
-        std::shared_ptr<RHI_ConstantBuffer> m_cb_light_gpu;
-	};
+        // Shadows
+        bool m_shadows_enabled              = true;
+        bool m_shadows_screen_space_enabled = true;
+        bool m_shadows_transparent_enabled  = true;
+        uint32_t m_cascade_count            = 4;
+        ShadowMap m_shadow_map;
+
+        // Bias
+        float m_bias        = 0.0f;
+        float m_normal_bias = 3.0f;
+
+        // Misc
+        LightType m_light_type      = LightType::Directional;
+        Math::Vector4 m_color_rgb   = Math::Vector4(1.0f, 0.76f, 0.57f, 1.0f);
+        bool m_volumetric_enabled   = true;
+        float m_range               = 10.0f;
+        float m_intensity           = 128000.0f;  // sun lux
+        float m_angle_rad           = 0.5f;       // about 30 degrees
+        float m_time_of_day         = 1.0f;
+        bool m_initialized          = false;
+        bool m_is_dirty             = true;
+        std::array<Math::Matrix, 6> m_matrix_view;
+        std::array<Math::Matrix, 6> m_matrix_projection;
+        Math::Quaternion m_previous_rot     = Math::Quaternion::Identity;
+        Math::Vector3 m_previous_pos        = Math::Vector3::Infinity;
+        Math::Matrix m_previous_camera_view = Math::Matrix::Identity;
+        Renderer* m_renderer;
+    };
 }

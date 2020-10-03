@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -20,12 +20,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 */
 
 //= INCLUDES ==================
+#include "Spartan.h"
 #include "RHI_Device.h"
-#include "../Core/Context.h"
-#include "../Core/Settings.h"
-#include "../Core/Timer.h"
-#include "../Math/MathHelper.h"
-#include <algorithm>
+#include "RHI_Implementation.h"
 //=============================
 
 //= NAMESPACES ===============
@@ -35,50 +32,84 @@ using namespace Spartan::Math;
 
 namespace Spartan
 {
-	void RHI_Device::AddDisplayMode(uint32_t width, uint32_t height, uint32_t refresh_rate_numerator, uint32_t refresh_rate_denominator)
-	{
-		auto& mode = m_displayModes.emplace_back(width, height, refresh_rate_numerator, refresh_rate_denominator);
-        // Let the timer know about the refresh rates this monitor is capable of (will result in low latency/smooth ticking)
-		m_context->GetSubsystem<Timer>()->AddMonitorRefreshRate(static_cast<double>(mode.refreshRate));
-	}
+    void RHI_Device::RegisterPhysicalDevice(const PhysicalDevice& physical_device)
+    {
+        m_physical_devices.emplace_back(physical_device);
 
-	bool RHI_Device::GetDisplayModeFastest(DisplayMode* display_mode)
-	{
-		if (m_displayModes.empty())
-			return false;
+        // Keep devices sorted, based on memory (from highest to lowest)
+        sort(m_physical_devices.begin(), m_physical_devices.end(), [](const PhysicalDevice& adapter1, const PhysicalDevice& adapter2)
+        {
+            return adapter1.GetMemory() > adapter2.GetMemory();
+        });
 
-		display_mode = &m_displayModes[0];
-		for (auto& mode : m_displayModes)
-		{
-			if (display_mode->refreshRate < mode.refreshRate)
-			{
-				display_mode = &mode;
-			}
-		}
+        LOG_INFO("%s (%d MB)", physical_device.GetName().c_str(), physical_device.GetMemory());
+    }
 
-		return true;
-	}
+    const PhysicalDevice* RHI_Device::GetPrimaryPhysicalDevice()
+    {
+        if (m_physical_device_index >= m_physical_devices.size())
+            return nullptr;
 
-	void RHI_Device::AddAdapter(const string& name, uint32_t memory, uint32_t vendor_id, void* adapter)
-	{
-		m_displayAdapters.emplace_back(name, memory, vendor_id, adapter);
-		sort(m_displayAdapters.begin(), m_displayAdapters.end(), [](const DisplayAdapter& adapter1, const DisplayAdapter& adapter2)
-		{
-			return adapter1.memory > adapter2.memory;
-		});
+        return &m_physical_devices[m_physical_device_index];
+    }
 
-		LOGF_INFO("%s (%d MB)", name.c_str(), memory);
-	}
+    void RHI_Device::SetPrimaryPhysicalDevice(const uint32_t index)
+    {
+        m_physical_device_index = index;
 
-	void RHI_Device::SetPrimaryAdapter(const DisplayAdapter* primary_adapter)
-	{
-		if (!primary_adapter)
-		{
-			LOG_ERROR_INVALID_PARAMETER();
-			return;
-		}
+        if (const PhysicalDevice* physical_device = GetPrimaryPhysicalDevice())
+        {
+            LOG_INFO("%s (%d MB)", physical_device->GetName().c_str(), physical_device->GetMemory());
+        }
+    }
 
-		m_primaryAdapter = primary_adapter;
-		LOGF_INFO("%s (%d MB)", primary_adapter->name.c_str(), primary_adapter->memory);
-	}
+    bool RHI_Device::ValidateResolution(const uint32_t width, const uint32_t height) const
+    {
+        if (!m_rhi_context)
+            return false;
+
+        return  width  > 0 && width  <= m_rhi_context->rhi_max_texture_dimension_2d &&
+                height > 0 && height <= m_rhi_context->rhi_max_texture_dimension_2d;
+    }
+
+    bool RHI_Device::Queue_WaitAll() const
+    {
+        return Queue_Wait(RHI_Queue_Graphics) && Queue_Wait(RHI_Queue_Transfer) && Queue_Wait(RHI_Queue_Compute);
+    }
+
+    void* RHI_Device::Queue_Get(const RHI_Queue_Type type) const
+    {
+        if (type == RHI_Queue_Graphics)
+        {
+            return m_rhi_context->queue_graphics;
+        }
+        else if (type == RHI_Queue_Transfer)
+        {
+            return m_rhi_context->queue_transfer;
+        }
+        else if (type == RHI_Queue_Compute)
+        {
+            return m_rhi_context->queue_compute;
+        }
+
+        return nullptr;
+    }
+
+    uint32_t RHI_Device::Queue_Index(const RHI_Queue_Type type) const
+    {
+        if (type == RHI_Queue_Graphics)
+        {
+            return m_rhi_context->queue_graphics_index;
+        }
+        else if (type == RHI_Queue_Transfer)
+        {
+            return m_rhi_context->queue_transfer_index;
+        }
+        else if (type == RHI_Queue_Compute)
+        {
+            return m_rhi_context->queue_compute_index;
+        }
+
+        return 0;
+    }
 }

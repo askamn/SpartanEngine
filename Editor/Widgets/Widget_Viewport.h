@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -30,6 +30,7 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 namespace Spartan
 {
     class Renderer;
+    class Settings;
     class World;
 }
 //========================
@@ -37,13 +38,13 @@ namespace Spartan
 class Widget_Viewport : public Widget
 {
 public:
-	Widget_Viewport(Spartan::Context* context);
-	void Tick() override;
+    Widget_Viewport(Editor* editor);
+    void Tick() override;
 
 private:
-	float m_timeSinceLastResChange  = 0.0f;
     float m_window_padding          = 4.0f;
+    bool m_is_resolution_dirty      = true;
     Spartan::Renderer* m_renderer   = nullptr;
-    Spartan::World* m_world         = nullptr;  
-    Spartan::RHI_Viewport m_viewport;
+    Spartan::Settings* m_settings   = nullptr;
+    Spartan::World* m_world         = nullptr; 
 };

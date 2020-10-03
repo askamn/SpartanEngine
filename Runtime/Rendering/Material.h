@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,129 +21,87 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #pragma once
 
-//= INCLUDES =====================
+//= INCLUDES ======================
 #include <memory>
-#include <map>
+#include <unordered_map>
 #include "../RHI/RHI_Definition.h"
 #include "../Resource/IResource.h"
 #include "../Math/Vector2.h"
 #include "../Math/Vector4.h"
-#include "../Math/Vector3.h"
-//================================
+//=================================
 
 namespace Spartan
-{	
-	class ShaderVariation;
+{
+    // Should I split these into properties and multipliers ?
+    enum Material_Property : uint16_t
+    {
+        Material_Unknown                = 0,
+        Material_Clearcoat              = 1 << 0,   // Extra white specular layer on top of others
+        Material_Clearcoat_Roughness    = 1 << 1,   // Roughness of clearcoat specular
+        Material_Anisotropic            = 1 << 2,   // Amount of anisotropy for specular reflection
+        Material_Anisotropic_Rotation   = 1 << 3,   // Rotates the direction of anisotropy, with 1.0 going full circle
+        Material_Sheen                  = 1 << 4,   // Amount of soft velvet like reflection near edges
+        Material_Sheen_Tint             = 1 << 5,   // Mix between white and using base color for sheen reflection
+        Material_Color                  = 1 << 6,   // Diffuse or metal surface color
+        Material_Roughness              = 1 << 7,   // Specifies microfacet roughness of the surface for diffuse and specular reflection
+        Material_Metallic               = 1 << 8,   // Blends between a non-metallic and metallic material model
+        Material_Normal                 = 1 << 9,   // Controls the normals of the base layers
+        Material_Height                 = 1 << 10,  // Perceived depth for parallax mapping
+        Material_Occlusion              = 1 << 11,  // Amount of light loss, can be complementary to SSAO
+        Material_Emission               = 1 << 12,  // Light emission from the surface, works nice with bloom
+        Material_Mask                   = 1 << 13   // Discards pixels
+    };
 
-	enum TextureType
-	{
-		TextureType_Unknown,
-		TextureType_Albedo,
-		TextureType_Roughness,
-		TextureType_Metallic,
-		TextureType_Normal,
-		TextureType_Height,
-		TextureType_Occlusion,
-		TextureType_Emission,
-		TextureType_Mask
-	};
+    class SPARTAN_CLASS Material : public IResource
+    {
+    public:
+        Material(Context* context);
+        ~Material() = default;
 
-	enum ShadingMode
-	{
-		Shading_Sky,
-		Shading_PBR
-	};
+        //= IResource ===========================================
+        bool LoadFromFile(const std::string& file_path) override;
+        bool SaveToFile(const std::string& file_path) override;
+        //=======================================================
 
-	class SPARTAN_CLASS Material : public IResource
-	{
-	public:
-		Material(Context* context);
-		~Material();
+        //= TEXTURES  ===========================================================================================================
+        void SetTextureSlot(const Material_Property type, const std::shared_ptr<RHI_Texture>& texture, float multiplier = 1.0f);
+        void SetTextureSlot(const Material_Property type, const std::shared_ptr<RHI_Texture2D>& texture);
+        void SetTextureSlot(const Material_Property type, const std::shared_ptr<RHI_TextureCube>& texture);
+        bool HasTexture(const std::string& path) const;
+        bool HasTexture(const Material_Property type) const { return m_flags & type; }
+        std::string GetTexturePathByType(Material_Property type);
+        std::vector<std::string> GetTexturePaths();
+        RHI_Texture* GetTexture_Ptr(const Material_Property type) { return HasTexture(type) ? m_textures[type].get() : nullptr; }
+        std::shared_ptr<RHI_Texture>& GetTexture_PtrShared(const Material_Property type);
+        //=======================================================================================================================
+        
+        //= PROPERTIES =====================================================================================
+        const Math::Vector4& GetColorAlbedo()                               const { return m_color_albedo; }
+        void SetColorAlbedo(const Math::Vector4& color);
 
-		//= IResource ===========================================
-		bool LoadFromFile(const std::string& file_path) override;
-		bool SaveToFile(const std::string& file_path) override;
-		//=======================================================
+        const Math::Vector2& GetTiling()                                    const { return m_uv_tiling; }
+        void SetTiling(const Math::Vector2& tiling)                         { m_uv_tiling = tiling; }
 
-		//= TEXTURES  ==================================================================================================
-		void SetTextureSlot(const TextureType type, const std::shared_ptr<RHI_Texture>& texture);
-		void SetTextureSlot(const TextureType type, const std::shared_ptr<RHI_Texture2D>& texture);
-		void SetTextureSlot(const TextureType type, const std::shared_ptr<RHI_TextureCube>& texture);
-		auto GetResources() const { return m_resources; }
-		bool HasTexture(const std::string& path);
-		std::string GetTexturePathByType(TextureType type);
-		std::vector<std::string> GetTexturePaths();
-		bool HasTexture(const TextureType type) { return m_textures.find(type) != m_textures.end(); }
-		const auto& GetTexture(const TextureType type) { return HasTexture(type) ? m_textures[type] : m_texture_empty; }
-		//==============================================================================================================
+        const Math::Vector2& GetOffset()                                    const { return m_uv_offset; }
+        void SetOffset(const Math::Vector2& offset)                         { m_uv_offset = offset; }
 
-		//= SHADER ====================================================================
-		void AcquireShader();
-		std::shared_ptr<ShaderVariation> GetOrCreateShader(unsigned long shader_flags);
-		const auto& GetShader() const { return m_shader; }
-		auto HasShader()		const { return GetShader() != nullptr; }
-		//=============================================================================
+        auto IsEditable()                                                   const { return m_is_editable; }
+        void SetIsEditable(const bool is_editable)                          { m_is_editable = is_editable; }
 
-		//= CONSTANT BUFFER ===================================================
-		bool UpdateConstantBuffer();
-		const auto& GetConstantBuffer() const { return m_constant_buffer_gpu; }
-		//=====================================================================
+        auto& GetProperty(const Material_Property type)                     { return m_properties[type]; }
+        void SetProperty(const Material_Property type, const float value)   { m_properties[type] = value; }
 
-		//= PROPERTIES ==========================================================================================
-		auto GetCullMode() const											{ return m_cull_mode; }
-		void SetCullMode(const RHI_Cull_Mode cull_mode)						{ m_cull_mode = cull_mode; }
+        uint16_t GetFlags()                                                 const { return m_flags; }
+        //==================================================================================================
 
-		auto GetShadingMode() const											{ return m_shading_mode; }
-		void SetShadingMode(const ShadingMode shading_mode)					{ m_shading_mode = shading_mode; }
-
-		const auto& GetColorAlbedo() const									{ return m_color_albedo; }
-		void SetColorAlbedo(const Math::Vector4& color)						{ m_color_albedo = color; }
-		
-		const auto& GetTiling() const										{ return m_uv_tiling; }
-		void SetTiling(const Math::Vector2& tiling)							{ m_uv_tiling = tiling; }
-
-		const auto& GetOffset() const										{ return m_uv_offset; }
-		void SetOffset(const Math::Vector2& offset)							{ m_uv_offset = offset; }
-
-		auto IsEditable() const { return m_is_editable; }
-		void SetIsEditable(const bool is_editable)							{ m_is_editable = is_editable; }
-
-		auto& GetMultiplier(const TextureType type)							{ return m_multipliers[type];}
-		void SetMultiplier(const TextureType type, const float multiplier)	{ m_multipliers[type] = multiplier; }
-
-		static TextureType TextureTypeFromString(const std::string& type);
-		//=======================================================================================================
-
-	private:
-		void UpdateResourceArray();
-
-		RHI_Cull_Mode m_cull_mode		= Cull_Back;
-		ShadingMode m_shading_mode		= Shading_PBR;
-		Math::Vector4 m_color_albedo	= Math::Vector4(1.0f, 1.0f, 1.0f, 1.0f);
-		Math::Vector2 m_uv_tiling		= Math::Vector2(1.0f, 1.0f);
-		Math::Vector2 m_uv_offset		= Math::Vector2(0.0f, 0.0f);
-		bool m_is_editable				= true;
-		const void* m_resources[8]		= {};
-		std::map<TextureType, std::shared_ptr<RHI_Texture>> m_textures;
-		std::map<TextureType, float> m_multipliers;
-		std::shared_ptr<ShaderVariation> m_shader;	
-		std::shared_ptr<RHI_Texture> m_texture_empty;
-		std::shared_ptr<RHI_Device> m_rhi_device;
-
-		// BUFFER
-		struct ConstantBufferData
-		{
-			Math::Vector4 mat_albedo	= Math::Vector4(1.0f, 1.0f, 1.0f, 1.0f);
-			Math::Vector2 mat_tiling_uv	= Math::Vector2(1.0f, 1.0f);
-			Math::Vector2 mat_offset_uv	= Math::Vector2(0.0f, 0.0f);
-			float mat_roughness_mul		= 0.0f;
-			float mat_metallic_mul		= 0.0f;
-			float mat_normal_mul		= 0.0f;
-			float mat_height_mul		= 0.0f;
-			float mat_shading_mode		= 0.0f;
-			Math::Vector3 padding		= Math::Vector3::Zero;
-		};
-		ConstantBufferData m_constant_buffer_cpu;
-		std::shared_ptr<RHI_ConstantBuffer> m_constant_buffer_gpu;
-	};
+    private:
+        Math::Vector4 m_color_albedo    = Math::Vector4(1.0f, 1.0f, 1.0f, 1.0f);
+        Math::Vector2 m_uv_tiling        = Math::Vector2(1.0f, 1.0f);
+        Math::Vector2 m_uv_offset        = Math::Vector2(0.0f, 0.0f);
+        bool m_is_editable                = true;
+        uint16_t m_flags                = 0;
+        std::unordered_map<Material_Property, std::shared_ptr<RHI_Texture>> m_textures;
+        std::unordered_map<Material_Property, float> m_properties;
+        std::shared_ptr<RHI_Device> m_rhi_device;
+    };
 }

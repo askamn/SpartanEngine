@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,40 +21,40 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #pragma once
 
-//= INCLUDES ========================
+//= INCLUDES ==============================
 #include <vector>
 #include <memory>
 #include "../../Math/Matrix.h"
-#include "../../Core/EngineDefs.h"
 #include "../../RHI/RHI_Definition.h"
-//===================================
+#include "../../Core/Spartan_Definitions.h"
+//=========================================
 
 namespace Spartan
 {
-	class Context;
-	class Transform;
+    class Context;
+    class Transform;
 
-	class SPARTAN_CLASS Grid
-	{
-	public:
-		Grid(std::shared_ptr<RHI_Device> rhiDevice);
-		~Grid(){}
-		
-		const Math::Matrix& ComputeWorldMatrix(Transform* camera);
-		
-		std::shared_ptr<RHI_IndexBuffer> GetIndexBuffer()	{ return m_indexBuffer; }
-		std::shared_ptr<RHI_VertexBuffer> GetVertexBuffer()	{ return m_vertexBuffer; }
-		uint32_t GetIndexCount()						{ return m_indexCount; }
+    class SPARTAN_CLASS Grid
+    {
+    public:
+        Grid(std::shared_ptr<RHI_Device> rhi_device);
+        ~Grid() = default;
+        
+        const Math::Matrix& ComputeWorldMatrix(Transform* camera);
+        
+        const auto& GetIndexBuffer() const  { return m_indexBuffer; }
+        const auto& GetVertexBuffer() const { return m_vertexBuffer; }
+        uint32_t GetIndexCount() const      { return m_indexCount; }
 
-	private:
-		void BuildGrid(std::vector<RHI_Vertex_PosCol>* vertices, std::vector<uint32_t>* indices);
-		bool CreateBuffers(std::vector<RHI_Vertex_PosCol>& vertices, std::vector<uint32_t>& indices, std::shared_ptr<RHI_Device>& rhiDevice);
+    private:
+        void BuildGrid(std::vector<RHI_Vertex_PosCol>* vertices, std::vector<uint32_t>* indices);
+        bool CreateBuffers(std::vector<RHI_Vertex_PosCol>& vertices, std::vector<uint32_t>& indices, std::shared_ptr<RHI_Device>& rhi_device);
 
-		uint32_t m_indexCount;
-		uint32_t m_terrainHeight;
-		uint32_t m_terrainWidth;
-		std::shared_ptr<RHI_VertexBuffer> m_vertexBuffer;
-		std::shared_ptr<RHI_IndexBuffer> m_indexBuffer;
-		Math::Matrix m_world;
-	};
+        uint32_t m_indexCount;
+        uint32_t m_terrainHeight;
+        uint32_t m_terrainWidth;
+        std::shared_ptr<RHI_VertexBuffer> m_vertexBuffer;
+        std::shared_ptr<RHI_IndexBuffer> m_indexBuffer;
+        Math::Matrix m_world;
+    };
 }

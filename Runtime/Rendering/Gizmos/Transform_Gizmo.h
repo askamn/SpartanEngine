@@ -1,5 +1,5 @@
 /*
-Copyright(c) 2016-2019 Panos Karabelas
+Copyright(c) 2016-2020 Panos Karabelas
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -21,48 +21,50 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #pragma once
 
-//= INCLUDES =====================
+//= INCLUDES ==============================
 #include <memory>
 #include "TransformHandle.h"
-#include "../../Core/EngineDefs.h"
-//================================
+#include "../../Core/Spartan_Definitions.h"
+//=========================================
 
 namespace Spartan
 {
-	class World;
-	class Input;
-	class Camera;
-	class Context;
-	class Entity;
-	class RHI_IndexBuffer;
-	class RHI_VertexBuffer;
+    class World;
+    class Input;
+    class Camera;
+    class Context;
+    class Entity;
+    class RHI_IndexBuffer;
+    class RHI_VertexBuffer;
 
-	class SPARTAN_CLASS Transform_Gizmo
-	{
-	public:
-		Transform_Gizmo(Context* context);
-		~Transform_Gizmo() = default;
+    class SPARTAN_CLASS Transform_Gizmo
+    {
+    public:
+        Transform_Gizmo(Context* context);
+        ~Transform_Gizmo() = default;
 
-		const std::shared_ptr<Entity>& SetSelectedEntity(const std::shared_ptr<Entity>& entity); 
-		bool Update(Camera* camera, float handle_size, float handle_speed);
-		uint32_t GetIndexCount();
-		std::shared_ptr<RHI_VertexBuffer> GetVertexBuffer();
-		std::shared_ptr<RHI_IndexBuffer> GetIndexBuffer();
-		const TransformHandle& GetHandle() const;
-		bool DrawXYZ() const { return m_type == TransformHandle_Scale; }
-		
-	private:
-		bool m_is_editing               = false;
-		bool m_just_finished_editing    = false;
+        std::weak_ptr<Spartan::Entity> SetSelectedEntity(const std::shared_ptr<Entity>& entity);
+        bool Update(Camera* camera, float handle_size, float handle_speed);
+        uint32_t GetIndexCount()                    const;
+        const RHI_VertexBuffer* GetVertexBuffer()   const;
+        const RHI_IndexBuffer* GetIndexBuffer()     const;
+        const TransformHandle& GetHandle()          const;
+        bool DrawXYZ()                              const { return m_type == TransformHandle_Scale; }
+        bool IsEntitySelected()                     const { return m_is_editing; }
+        const Entity* GetSelectedEntity()           const { return m_entity_selected.lock().get(); }
+        
+    private:
+        bool m_is_editing               = false;
+        bool m_just_finished_editing    = false;
 
-		std::shared_ptr<Entity> m_entity_selected;
-		TransformHandle m_handle_position;
-		TransformHandle m_handle_rotation;
-		TransformHandle m_handle_scale;
-		TransformHandle_Type m_type;
-		TransformHandle_Space m_space;
-		Context* m_context;
-		Input* m_input;
-		World* m_world;
-	};
+        std::weak_ptr<Entity> m_entity_selected;
+        TransformHandle m_handle_position;
+        TransformHandle m_handle_rotation;
+        TransformHandle m_handle_scale;
+        TransformHandle_Type m_type;
+        TransformHandle_Space m_space;
+        Context* m_context;
+        Input* m_input;
+        World* m_world;
+    };
 }
